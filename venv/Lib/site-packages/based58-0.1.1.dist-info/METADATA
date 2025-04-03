@@ -1,0 +1,80 @@
+Metadata-Version: 2.1
+Name: based58
+Version: 0.1.1
+Classifier: Programming Language :: Rust
+Classifier: Programming Language :: Python :: Implementation :: CPython
+License-File: LICENSE
+Summary: A fast Python library for Base58 and Base58Check
+Author-email: kevinheavey <kevinheavey123@gmail.com>
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown; charset=UTF-8; variant=GFM
+Project-URL: homepage, https://github.com/kevinheavey/based58
+Project-URL: repository, https://github.com/kevinheavey/based58
+Project-URL: documentation, https://kevinheavey.github.io/based58/
+Project-URL: changelog, https://github.com/kevinheavey/based58/blob/main/CHANGELOG.md
+
+# based58
+
+A fast base-58 Python library
+
+`based58` is a fast Python library for
+[Base58](https://en.wikipedia.org/wiki/Binary-to-text_encoding#Base58)
+encoding and decoding. It includes support for Base58Check and configurable alphabets.
+
+It is
+[significantly faster](https://gist.github.com/kevinheavey/2abad728d7658c136de0078d667d7267)
+than the pure-Python
+[base58 library](https://gist.github.com/kevinheavey/2abad728d7658c136de0078d667d7267),
+as it calls the Rust [bs58 library](https://github.com/mycorrhiza/bs58-rs)
+under the hood.
+
+The API mimics that of the `base58` library, with the exception that string inputs are not
+supported, only bytes.
+
+## Installation
+
+    pip install based58
+
+Note: requires Python >= 3.7.
+
+## Usage
+
+```python
+>>> import based58
+>>> data = [1, 2, 3]
+>>> based58.b58encode(b'hello world')
+b'StV1DL6CwTryKyV'
+>>> based58.b58decode(b'StV1DL6CwTryKyV')
+b'hello world'
+>>> based58.b58encode_check(b'hello world')
+b'3vQB7B6MrGQZaxCuFg4oh'
+>>> based58.b58decode_check(b'3vQB7B6MrGQZaxCuFg4oh')
+b'hello world'
+>>> based58.b58encode(b'hello world', alphabet=based58.Alphabet.RIPPLE)
+b'StVrDLaUATiyKyV'
+>>> based58.b58decode(b'StVrDLaUATiyKyV', alphabet=based58.Alphabet.RIPPLE)
+b'hello world'
+```
+
+## Development
+
+### Setup
+
+1. Install [poetry](https://python-poetry.org/)
+2. Install dev dependencies:
+
+```
+poetry install
+```
+
+3. Activate the poetry shell:
+
+```sh
+poetry shell
+```
+
+### Testing
+
+1. Run `maturin develop` to compile the Rust code.
+2. Run `make fmt`, `make lint`, and `make test`.
+
