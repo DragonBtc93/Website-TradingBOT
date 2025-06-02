@@ -8,7 +8,7 @@ load_dotenv()
 # Solana configuration
 SOLANA_NETWORK = "mainnet-beta"
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
-WALLET_PRIVATE_KEY = "2eg1P2QGC9iQXPNHiTMx2VkCYc3viBfE9ocavJ6VC8X2ZB4PZckguCzQ6AnCkkKBv9LbkUh47yjSq5emggmPaKTv"
+WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY")
 
 # Token scanning parameters
 MIN_LIQUIDITY = 25000

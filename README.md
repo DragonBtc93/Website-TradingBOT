@@ -26,9 +26,24 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-4. Edit `.env` with your configuration:
-- Add your Solana wallet private key
-- Adjust trading parameters as needed
+4. Edit `.env` with your configuration.
+
+   **Important Security Notice: Managing Your `WALLET_PRIVATE_KEY`**
+
+   Your `WALLET_PRIVATE_KEY` is extremely sensitive. It provides full control over your Solana wallet.
+   - **Never hardcode your private key directly in any script or share it publicly.**
+   - The bot is configured to load `WALLET_PRIVATE_KEY` from an environment variable stored in the `.env` file. This file is listed in `.gitignore` and should never be committed to version control.
+
+   **To set up your `WALLET_PRIVATE_KEY`:**
+   - Open the `.env` file you created in the previous step.
+   - Find the line `WALLET_PRIVATE_KEY=""`.
+   - Replace the empty string with your actual Solana wallet private key. For example:
+     ```
+     WALLET_PRIVATE_KEY=your_actual_private_key_here
+     ```
+   - Save the `.env` file.
+
+- Adjust other trading parameters as needed
 - Configure risk management settings
 
 ## Running the Bot
