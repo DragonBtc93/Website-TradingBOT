@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 
+from .config import TRAILING_STOP_LOSS_PERCENTAGE # Import for trailing stop loss
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -205,14 +207,33 @@ class SolanaTrader:
             logger.error(f"Error calculating Ichimoku Cloud: {e}")
             return None
 
-    async def should_trade(self, token_address: str) -> tuple[bool, str]:
+    async def should_trade(self, token_address: str, rugcheck_data: Optional[dict] = None, sentiment_data: Optional[dict] = None) -> tuple[bool, str]:
         """Determine if we should enter a trade based on multiple factors"""
+        log_prefix = f"Token {token_address}:" # For consistent logging within this function
+
+        if rugcheck_data:
+            logger.debug(f"{log_prefix} Received Rugcheck data: Risk Level='{rugcheck_data.get('risk_level', 'N/A')}', Is Safe='{rugcheck_data.get('is_safe', 'N/A')}'")
+            # logger.debug(f"{log_prefix} Full Rugcheck details: {rugcheck_data.get('details')}") # Potentially too verbose for debug
+        else:
+            logger.debug(f"{log_prefix} No Rugcheck data provided to should_trade.")
+
+        if sentiment_data:
+            logger.debug(f"{log_prefix} Received Sentiment data: Sentiment='{sentiment_data.get('sentiment', 'N/A')}', Score='{sentiment_data.get('sentiment_score', 'N/A')}'")
+        else:
+            logger.debug(f"{log_prefix} No Sentiment data provided to should_trade.")
+
+        # TODO: Incorporate rugcheck_data (e.g., risk_level, is_safe) into trading decision logic.
+        # Example: if rugcheck_data and not rugcheck_data.get('is_safe'): return False, "Token deemed unsafe by RugCheck."
+
+        # TODO: Incorporate sentiment_data (e.g., sentiment_score) into trading decision logic.
+        # Example: if sentiment_data and sentiment_data.get('sentiment_score', 0.5) < 0.3: return False, "Sentiment too negative."
+
         try:
             # Get historical price data (implement your data fetching logic)
-            price_history = await self.get_price_history(token_address)
-            volume_history = await self.get_volume_history(token_address)
+            price_history = await self.get_price_history(token_address) # Placeholder
+            volume_history = await self.get_volume_history(token_address) # Placeholder
             
-            if not price_history or not volume_history:
+            if not price_history or not volume_history or len(price_history) < 2 or len(volume_history) < 2: # Ensure enough data for diff etc.
                 return False, "Insufficient historical data"
 
             # Calculate technical indicators
@@ -260,6 +281,7 @@ class SolanaTrader:
                 signals['stoch_oversold']
             )
             
+            # Current trading logic remains unchanged by rugcheck/sentiment data for now
             # Strong buy signal when all conditions align
             if primary_signals and ichimoku_signals and secondary_signals:
                 return True, f"Strong buy signal ({signal_strength:.1f}% confidence)"
@@ -272,7 +294,7 @@ class SolanaTrader:
             return False, f"Insufficient signals ({signal_strength:.1f}% confidence)"
             
         except Exception as e:
-            logger.error(f"Error in trade analysis: {e}")
+            logger.error(f"{log_prefix} Error in trade analysis: {e}", exc_info=True)
             return False, f"Analysis error: {str(e)}"
 
     async def execute_trade(self, token_address: str, amount: float, is_buy: bool = True) -> bool:
@@ -287,10 +309,11 @@ class SolanaTrader:
                     self.active_positions[token_address] = {
                         'entry_price': entry_price,
                         'amount': amount,
-                        'stop_loss': entry_price * (1 - self.stop_loss_pct),
-                        'take_profit': entry_price * (1 + self.take_profit_pct)
+                        'stop_loss': entry_price * (1 - self.stop_loss_pct), # Initial stop loss
+                        'take_profit': entry_price * (1 + self.take_profit_pct),
+                        'highest_price_since_entry': entry_price # Initialize highest price
                     }
-                    logger.info(f"PREVIEW MODE: Opened position for {token_address} at {entry_price:.6f}, Amount: {amount}")
+                    logger.info(f"PREVIEW MODE: Opened position for {token_address} at {entry_price:.6f}, Amount: {amount}, SL: {self.active_positions[token_address]['stop_loss']:.6f}")
                 elif entry_price is None:
                     logger.error(f"Could not obtain entry price for {token_address}. Buy order not placed.")
                 else: # entry_price is 0 or negative
@@ -359,11 +382,29 @@ class SolanaTrader:
             # Ensure position variable is up-to-date if it could change
             # For this flow, position taken at start of loop for this token_address is fine.
 
+            # Trailing Stop Loss Logic
+            if current_price > position.get('highest_price_since_entry', position['entry_price']): # Default to entry_price if key missing for older positions
+                position['highest_price_since_entry'] = current_price
+                logger.debug(f"Highest price for {token_address} updated to {current_price:.6f}")
+
+            # TRAILING_STOP_LOSS_PERCENTAGE should be a positive value representing percentage, e.g., 5 for 5%
+            trailing_stop_price = position['highest_price_since_entry'] * (1 - TRAILING_STOP_LOSS_PERCENTAGE / 100.0)
+
+            old_stop_loss = position['stop_loss']
+            # Ensure stop loss only moves up
+            new_stop_loss = max(old_stop_loss, trailing_stop_price)
+
+            if new_stop_loss > old_stop_loss:
+                position['stop_loss'] = new_stop_loss
+                logger.info(f"Trailing stop loss for {token_address} updated from {old_stop_loss:.6f} to {new_stop_loss:.6f} (Highest price: {position['highest_price_since_entry']:.6f})")
+
+
+            # Check for stop-loss or take-profit execution
             if current_price <= position['stop_loss']:
                 logger.info(f"Stop loss triggered for {token_address} at price {current_price:.6f} (SL: {position['stop_loss']:.6f})")
                 await self.execute_trade(token_address, position['amount'], is_buy=False)
 
-            elif current_price >= position['take_profit']:
+            elif current_price >= position['take_profit']: # Take profit remains fixed based on entry
                 logger.info(f"Take profit triggered for {token_address} at price {current_price:.6f} (TP: {position['take_profit']:.6f})")
                 await self.execute_trade(token_address, position['amount'], is_buy=False)
             # No sleep here as start_trading has its own sleep.
@@ -631,14 +672,34 @@ class SolanaTrader:
                                 logger.warning(f"Token data missing 'address': {token_data}. Skipping.")
                                 continue
 
+                            # Extract rugcheck and sentiment data, providing defaults if missing
+                            rugcheck_assessment = token_data.get('rugcheck_assessment', {'risk_level': 'N/A', 'is_safe': 'Unknown'})
+                            social_sentiment = token_data.get('social_sentiment', {'sentiment': 'N/A', 'sentiment_score': 'N/A'})
+                            scanner_price_str = token_data.get('price')
+                            try:
+                                current_price_from_scanner = float(scanner_price_str) if scanner_price_str is not None else 0.0
+                            except (ValueError, TypeError):
+                                current_price_from_scanner = 0.0
+
+                            logger.info(
+                                f"Processing Token: {token_symbol} ({token_address}) - "
+                                f"Scanner Price: ${current_price_from_scanner:.6f}, "
+                                f"Rugcheck: {rugcheck_assessment.get('risk_level', 'N/A')} (Safe: {rugcheck_assessment.get('is_safe', 'Unknown')}), "
+                                f"Sentiment: {social_sentiment.get('sentiment', 'N/A')} (Score: {social_sentiment.get('sentiment_score', 'N/A')})"
+                            )
+
                             if token_address not in self.active_positions:
                                 if await self.check_token_contract(token_address): # Simulated
-                                    # should_trade uses its own get_price_history, which is placeholder.
-                                    # For now, this remains as is.
-                                    should_trade_flag, reason = await self.should_trade(token_address)
+                                    # Pass rugcheck and sentiment data to should_trade
+                                    should_trade_flag, reason = await self.should_trade(
+                                        token_address,
+                                        rugcheck_data=rugcheck_assessment,
+                                        sentiment_data=social_sentiment
+                                    )
                                     if should_trade_flag:
-                                        scanner_price_str = token_data.get('price')
                                         try:
+                                            # current_price_for_sizing should ideally be the most up-to-date price
+                                            # For now, using the price from scanner data as before
                                             current_price_for_sizing = float(scanner_price_str) if scanner_price_str is not None else None
                                         except (ValueError, TypeError) as e:
                                             logger.warning(f"Invalid price format ('{scanner_price_str}') from scanner for {token_symbol}. Skipping trade. Error: {e}")
@@ -652,13 +713,13 @@ class SolanaTrader:
                                         position_size = await self.calculate_position_size(current_price_for_sizing, 0.5)
 
                                         if position_size > 0:
-                                            logger.info(f"Attempting to execute buy for {token_symbol} ({token_address}), Size: {position_size}, Scanner Price: {current_price_for_sizing:.6f}, Reason: {reason}")
+                                            logger.info(f"Attempting to execute buy for {token_symbol} ({token_address}), Size: {position_size}, Reason: {reason}")
                                             if await self.execute_trade(token_address, position_size, is_buy=True):
                                                 # execute_trade now logs its own success/failure for opening position.
-                                                # Log additional details from scanner
-                                                logger.info(f"  Scanner Data for {token_symbol}: Liquidity=${token_data.get('liquidity', 0):,.0f}, Vol24h=${token_data.get('volume_24h', 0):,.0f}, Holders={token_data.get('holders', 0)}")
-                                                buy_sell_ratio = token_data.get('buy_sell_ratio', 'N/A')
-                                                logger.info(f"  Buy/Sell Ratio: {buy_sell_ratio if isinstance(buy_sell_ratio, str) else f'{buy_sell_ratio:.2f}'}")
+                                                # Log additional details from scanner (already logged above mostly)
+                                                logger.info(f"  Scanner Data (supplemental) for {token_symbol}: Liquidity=${token_data.get('liquidity', 0):,.0f}, Vol24h=${token_data.get('volume_24h', 0):,.0f}, Holders={token_data.get('holders', 0)}")
+                                                buy_sell_ratio = token_data.get('buy_sell_ratio', 'N/A') # Already logged in scanner
+                                                # logger.info(f"  Buy/Sell Ratio: {buy_sell_ratio if isinstance(buy_sell_ratio, str) else f'{buy_sell_ratio:.2f}'}") # Redundant if logged by scanner
                                         else:
                                             logger.info(f"Position size for {token_symbol} is zero. Skipping trade.")
                                     # else: # Optional: log why not trading if reason is informative

@@ -18,6 +18,7 @@ MAX_TOKEN_AGE_HOURS = 6
 
 # Risk management
 STOP_LOSS_PERCENTAGE = 12
+TRAILING_STOP_LOSS_PERCENTAGE = 5 # Percentage below highest price to set trailing stop
 MAX_POSITION_SIZE = 0.03
 TAKE_PROFIT_LEVELS = [1.5, 2, 3, 5]
 

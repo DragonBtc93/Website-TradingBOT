@@ -229,7 +229,7 @@ class TokenScanner:
                 if not pairs:
                     logger.info("No pairs found in the current scan iteration.")
                     return
-                    
+
                 self.scan_count += 1
                 logger.info(f"Scanning iteration {self.scan_count}: Found {len(pairs)} pairs from general scan.")
 
@@ -249,7 +249,8 @@ class TokenScanner:
                         continue
 
                     token_symbol = base_token_info.get('symbol')
-                    log_prefix = f"Token {token_symbol} ({pair_address}):"
+                    base_token_address = base_token_info.get('address') # Get the token's own address
+                    log_prefix = f"Token {token_symbol} ({pair_address}, Mint: {base_token_address}):"
 
                     # Validate data types for values to be stored
                     try:
@@ -283,24 +284,58 @@ class TokenScanner:
                         # However, 'holders' might not be rich in `pair_data` from the general scan.
                         # For now, let's assume `analyze_token_metrics` is the primary filter from this list.
                         # If `check_holder_metrics` is essential here and needs more data,
-                        # we might need to call `fetch_token_data(base_token_info.get('address'))`
+                        # we might need to call `fetch_token_data(base_token_address)`
                         # For now, this is how original code was structured.
 
-                        # holder_passed, holder_reason = await self.check_holder_metrics(pair_data) # `pair_data` might not have detailed holder info
+                        # holder_passed, holder_reason = await self.check_holder_metrics(pair_data)
                         # if not holder_passed:
                         #     logger.info(f"{log_prefix} Failed holder check: {holder_reason}")
                         #     continue
 
+                        # Call RugCheck API
+                        rugcheck_assessment = {'is_safe': None, 'risk_level': 'unknown', 'details': {'error': 'Not checked'}}
+                        if base_token_address: # Ensure we have an address to check
+                            if not self.session or self.session.closed: # Ensure session is available
+                                logger.warning(f"{log_prefix} Aiohttp session not available for RugCheck. Re-initializing.")
+                                await self.initialize() # Re-initialize if session is lost - initialize() is the scanner's session init method
+
+                            if self.session and not self.session.closed:
+                                rugcheck_assessment = await self.verify_token_safety_rugcheck(self.session, base_token_address)
+                                logger.info(f"{log_prefix} RugCheck Assessment: Risk Level='{rugcheck_assessment.get('risk_level', 'N/A')}', Is Safe='{rugcheck_assessment.get('is_safe', 'N/A')}'")
+                            else:
+                                logger.error(f"{log_prefix} Session still not available after attempting re-initialization. Cannot call RugCheck.")
+                        else:
+                            logger.warning(f"{log_prefix} No base token address found, cannot perform RugCheck.")
+
+                        # TODO: Filter tokens based on rugcheck.xyz assessment once API is confirmed and logic is refined.
+                        # For example:
+                        # if rugcheck_assessment.get('is_safe') is False:
+                        #     logger.info(f"{log_prefix} Skipping token due to RugCheck assessment: {rugcheck_assessment.get('risk_level')}")
+                        #     continue
+
+                        # Get social sentiment (placeholder)
+                        social_sentiment_data = {'sentiment_score': None, 'sentiment': 'unknown', 'source': 'none'}
+                        if base_token_address and token_symbol: # Requires symbol and address
+                            if self.session and not self.session.closed:
+                                social_sentiment_data = await self.get_social_sentiment_placeholder(self.session, token_symbol, base_token_address)
+                                logger.info(f"{log_prefix} Social Sentiment (Placeholder): Score='{social_sentiment_data.get('sentiment_score', 'N/A')}', Sentiment='{social_sentiment_data.get('sentiment', 'N/A')}'")
+                            else:
+                                logger.warning(f"{log_prefix} Session not available for social sentiment check.")
+                        else:
+                            logger.warning(f"{log_prefix} Missing token symbol or address for social sentiment check.")
+
                         self.potential_tokens.append({
-                            'address': base_token_info.get('address'), # Storing base token address
-                            'pair_address': pair_address, # Storing pair address
+                            'address': base_token_address,
+                            'pair_address': pair_address,
                             'symbol': token_symbol,
                             'price': price_usd,
                             'liquidity': liquidity_usd_val,
                             'volume_24h': volume_h24_val,
-                            'holders': holders_total, # This might be 0 if not available in pair list
-                            'buy_sell_ratio': self._calculate_buy_sell_ratio(pair_data), # Ensure this uses validated data
-                            'timestamp': datetime.now()
+                            'holders': holders_total,
+                            'buy_sell_ratio': self._calculate_buy_sell_ratio(pair_data),
+                            'timestamp': datetime.now(),
+                            'rugcheck_assessment': rugcheck_assessment, # Store the assessment
+                            'social_sentiment': social_sentiment_data # Store social sentiment
                         })
                         logger.info(f"{log_prefix} Found potential token at ${price_usd:.6f}")
                     else:
@@ -332,6 +367,151 @@ class TokenScanner:
             return 0.0
 
         return buys / sells if sells > 0 else float('inf')
+
+    async def verify_token_safety_rugcheck(self, session: aiohttp.ClientSession, token_address: str) -> dict:
+        """
+        Verifies token safety using a hypothetical RugCheck.xyz API endpoint.
+
+        Args:
+            session: The aiohttp client session to use for the request.
+            token_address: The Solana token address to check.
+
+        Returns:
+            A dictionary containing the safety assessment.
+            Example success: {'is_safe': True, 'risk_level': 'low', 'details': {'score': 0.8, 'warnings': []}}
+            Example failure: {'is_safe': None, 'risk_level': 'unknown', 'details': {'error': 'API call failed'}}
+
+        **ASSUMPTIONS:**
+        - API Endpoint: Assumes the API endpoint is `https://api.rugcheck.xyz/v1/solana/check/{token_address}`.
+                         This is a hypothetical URL and may not be correct.
+        - API Key: Assumes no API key is required for this endpoint. Real APIs often require keys.
+        - Response Structure: Assumes the JSON response has fields like 'riskLevel' (string),
+          'score' (float/int), 'warnings' (list), and potentially other details.
+          Example assumed structure:
+          {
+            "token": "...",
+            "riskLevel": "low", // "low", "medium", "high", "critical"
+            "score": 85, // Numerical score
+            "warnings": ["No liquidity lock found", "High concentration of holders"],
+            "analysis": {
+                "mint_renounced": true,
+                "liquidity_locked_percent": 0,
+                // ... other details
+            }
+          }
+        - Safety Logic: The determination of 'is_safe' is based on an assumed interpretation of these fields
+          (e.g., 'riskLevel' not being 'high' or 'critical', and 'score' being above a threshold).
+        """
+        # Assumption: This is a hypothetical URL for rugcheck.xyz
+        url = f"https://api.rugcheck.xyz/v1/solana/check/{token_address}"
+        default_failure_response = {
+            'is_safe': None,
+            'risk_level': 'unknown',
+            'details': {'error': 'API call failed or unexpected response', 'raw_response': None}
+        }
+
+        if not token_address:
+            logger.warning("verify_token_safety_rugcheck: No token address provided.")
+            return {**default_failure_response, 'details': {'error': 'No token address provided.'}}
+
+        try:
+            logger.debug(f"Querying RugCheck for token {token_address} at {url}")
+            async with session.get(url, timeout=10) as response: # Added timeout
+                response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
+
+                # Assumption: Response is JSON.
+                data = await response.json(content_type=None) # content_type=None for flexibility
+                logger.debug(f"RugCheck response for {token_address}: {data}")
+
+                if not data or not isinstance(data, dict):
+                    logger.warning(f"RugCheck API returned no data or invalid format for {token_address}.")
+                    return {**default_failure_response, 'details': {'error': 'Empty or invalid response from API', 'raw_response': data}}
+
+                # Assumption: Interpreting the response structure.
+                # These field names are purely speculative.
+                risk_level = data.get('riskLevel', 'unknown').lower()
+                # score = data.get('score') # Example: numerical score
+                # warnings = data.get('warnings', []) # Example: list of warning strings
+
+                # Basic safety determination logic (highly dependent on actual API response)
+                # This is a simplified example.
+                is_safe = True
+                if risk_level in ['high', 'critical', 'extreme']:
+                    is_safe = False
+                # Could also check for specific warnings if `warnings` list exists
+                # e.g., if any("honeypot" in w.lower() for w in warnings): is_safe = False
+
+                return {
+                    'is_safe': is_safe,
+                    'risk_level': risk_level,
+                    'details': data # Store the full response for now
+                }
+
+        except aiohttp.ClientResponseError as http_err:
+            logger.error(f"HTTP error calling RugCheck API for {token_address}: {http_err}")
+            return {**default_failure_response, 'details': {'error': f"HTTP error: {http_err.status} {http_err.message}", 'raw_response': await http_err.response.text() if http_err.response else None}}
+        except aiohttp.ClientConnectionError as conn_err:
+            logger.error(f"Connection error calling RugCheck API for {token_address}: {conn_err}")
+            return {**default_failure_response, 'details': {'error': f"Connection error: {conn_err}"}}
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout calling RugCheck API for {token_address} at {url}")
+            return {**default_failure_response, 'details': {'error': 'API call timed out'}}
+        except aiohttp.ContentTypeError as ct_err:
+            logger.error(f"JSON decode error (content type) from RugCheck API for {token_address}: {ct_err}")
+            return {**default_failure_response, 'details': {'error': f"JSON decode error: {ct_err}", 'raw_response': ct_err.message if hasattr(ct_err, 'message') else str(ct_err)}}
+        except Exception as e:
+            logger.error(f"Unexpected error calling RugCheck API for {token_address}: {e}", exc_info=True)
+            return {**default_failure_response, 'details': {'error': f"Unexpected error: {str(e)}"}}
+
+    async def get_social_sentiment_placeholder(self, session: aiohttp.ClientSession, token_symbol: str, token_address: str) -> dict:
+        """
+        Placeholder: Simulates fetching social sentiment for a token.
+
+        Current Behavior:
+        - This function is a placeholder and returns a predefined neutral sentiment.
+        - It includes a small artificial delay to simulate network latency.
+
+        Args:
+            session: The aiohttp client session (not used in placeholder, but for API consistency).
+            token_symbol: The token symbol (e.g., "SOL").
+            token_address: The Solana token address.
+
+        Returns:
+            A dictionary containing the simulated sentiment data.
+            Example: {'sentiment_score': 0.5, 'sentiment': 'neutral', 'source': 'placeholder'}
+
+        Intended Functionality (Future Expansion):
+        - To fetch and analyze social media mentions, news articles, and forum discussions related to the token.
+        - Calculate a sentiment score (e.g., from -1.0 negative to 1.0 positive) and a qualitative label (e.g., "positive", "negative", "neutral").
+        - Identify trends, hype levels, or potential FUD (Fear, Uncertainty, Doubt).
+
+        Implementation Suggestions (Future Expansion):
+        - APIs:
+            - Twitter API (X API): Search for tweets mentioning the token symbol or name. Requires careful handling of rate limits and API access policies.
+            - Reddit API: Search for posts and comments in relevant subreddits (e.g., r/Solana, r/CryptoCurrency, token-specific communities).
+            - News APIs (e.g., NewsAPI, GNews): Fetch news articles related to the token or project.
+            - Specialized Crypto Sentiment APIs: Services like LunarCrush, Santiment, CryptoCompare might offer sentiment scores directly,
+              though these often require paid subscriptions.
+        - Web Scraping (use with caution and respect for terms of service):
+            - Scrape forums like Bitcointalk or specific project forums.
+        - NLP Libraries:
+            - Python libraries like NLTK, spaCy, VADER (Valence Aware Dictionary and sEntiment Reasoner - good for social media text),
+              or transformers (Hugging Face) for sentiment analysis on the collected text data.
+        - Data Aggregation: Combine sentiment from multiple sources for a more robust score.
+        - Challenges: Filtering noise, identifying relevant mentions, handling slang/sarcasm, detecting shilling or FUD campaigns.
+        """
+        # Simulate network latency (optional)
+        await asyncio.sleep(0.1)
+
+        logger.debug(f"Simulating social sentiment check for {token_symbol} ({token_address})")
+
+        # Predefined placeholder response
+        return {
+            'sentiment_score': 0.5, # Normalized score, e.g., 0.0 (very negative) to 1.0 (very positive)
+            'sentiment': 'neutral', # Qualitative label: 'positive', 'negative', 'neutral'
+            'posts_analyzed': 0, # Number of posts/tweets/articles analyzed
+            'source': 'placeholder' # Indicates this is not real data
+        }
 
     def get_potential_tokens(self):
 # Ensure this part is not duplicated if it was part of the previous block
