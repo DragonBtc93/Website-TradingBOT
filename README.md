@@ -8,12 +8,13 @@ An automated trading bot for Solana tokens with real-time monitoring and analysi
 - Advanced technical analysis indicators
 - Automated trading with risk management features (Stop Loss, Take Profit)
 - **Trailing Stop Loss**: Dynamically adjusts the stop-loss price upwards as the token price increases.
+- **Targeted Market Cap Scanning**: Initiates detailed analysis only when a token's market cap reaches a configurable target (`TARGET_MARKET_CAP_TO_SCAN`), with an overall max (`MAX_MARKET_CAP`).
+- **Token Safety Check (RugCheck.xyz Integration)**: Queries the RugCheck.xyz API for token risk assessment and filters out tokens based on score and critical warnings.
+- **Social Media Sentiment (Placeholder)**: Simulates social media sentiment analysis; results are logged but not yet used for filtering.
 - Web-based dashboard (if applicable, or specify if it's CLI based)
 - Integration with Jupiter aggregator for best swap rates (for trade execution)
 - Multiple take-profit levels
 - Position management
-- **Token Safety Check (Placeholder)**: Attempts to query an external API (rugcheck.xyz - currently assumed) for token risk assessment. Results are logged.
-- **Social Media Sentiment (Placeholder)**: Simulates social media sentiment analysis. Results are logged.
 
 
 ## Setup
@@ -52,6 +53,13 @@ cp .env.example .env
   - `TRAILING_STOP_LOSS_PERCENTAGE`: Percentage for the trailing stop-loss feature (e.g., `5` for 5%).
   - `MAX_POSITION_SIZE`: Maximum percentage of portfolio to allocate to a single trade.
   - `TAKE_PROFIT_LEVELS`: Define multiple levels for taking profit.
+  - `TARGET_MARKET_CAP_TO_SCAN`: The minimum market capitalization (FDV) a token must reach for detailed analysis (e.g., `30000`).
+
+  - **RugCheck.xyz Configuration:**
+    - `RUGCHECK_API_ENDPOINT`: The base URL for the RugCheck.xyz API (e.g., default `https://api.rugcheck.xyz/v1/tokens`). Used to construct specific report URLs.
+    - `RUGCHECK_API_KEY`: Your optional API key for RugCheck.xyz. Currently not strictly required for the `/report/summary` endpoint used by the bot, but can be set if you have one for potential future use or other endpoints.
+    - `RUGCHECK_SCORE_THRESHOLD`: The minimum `scoreNormalised` (0-100, higher is generally better) a token must have from RugCheck.xyz. Tokens with a score *below* this are filtered (e.g., default `70`).
+    - `RUGCHECK_CRITICAL_RISK_NAMES`: A comma-separated list of specific risk names (case-sensitive) that are considered critical deal-breakers. If a token's RugCheck report contains any of these risks, it will be filtered (e.g., default `"MutableMetadata,MintAuthorityEnabled,FreezeAuthorityEnabled,HighPrivilegedFunctions,Honeypot"`).
 
 ## Running the Bot
 
@@ -67,10 +75,14 @@ Access the dashboard at `http://localhost:8000`
 The bot implements a comprehensive trading strategy:
 
 1. Token Scanning:
-- Monitors new token launches
-- Analyzes liquidity and volume
-- Checks transaction patterns
-- Validates contract security
+- Monitors new token pairs on Solana, primarily using data from DexScreener.
+- **Market Cap Based Filtering**:
+    - Initially checks if a token's market capitalization (FDV - Fully Diluted Valuation) meets the `TARGET_MARKET_CAP_TO_SCAN` defined in the configuration. Detailed analysis is only performed if it meets this threshold.
+    - Further ensures the market cap does not exceed `MAX_MARKET_CAP`, an upper limit to avoid tokens that are already too large.
+- Analyzes liquidity, transaction volume, and patterns for tokens that pass the market cap criteria.
+- Performs safety checks (see "Token Safety Check" section).
+- Placeholder for social sentiment analysis (see "Social Media Sentiment" section).
+- The old "Validates contract security" point is now covered by the more detailed "Token Safety Check" section.
 
 2. Entry Criteria:
 - Token age < 24 hours
@@ -101,17 +113,16 @@ This feature helps to lock in profits while a trade is performing well and prote
 - This helps protect gains by raising the stop-loss level as the price increases, but keeping it fixed if the price dips temporarily (unless the dip hits the current stop-loss).
 - The `TRAILING_STOP_LOSS_PERCENTAGE` can be configured in your `.env` file.
 
-### Token Safety Check (rugcheck.xyz - Placeholder)
-To enhance security and avoid potentially malicious tokens, the bot includes a placeholder integration with an external token safety checking service.
-- **Functionality**: Before considering a trade, the bot attempts to query an API endpoint (assumed to be `https://api.rugcheck.xyz/v1/solana/check/{token_address}`) for the base token of a potential pair.
-- **Current Status**: This feature is currently a **placeholder**.
-    - The API endpoint and its response structure are *assumed* and may not reflect the actual `rugcheck.xyz` API or any other similar service.
-    - The bot logs the information received from this hypothetical API (e.g., risk level, warnings).
-- **Future Work (`TODO`):**
-    - Confirm a reliable API for token safety checks.
-    - Adapt the parser to the actual API response structure.
-    - Implement logic to filter or avoid tokens based on the safety assessment (e.g., skip tokens with a 'high' risk level).
-- **Note**: No API key is currently assumed or required for this placeholder. If a real service is integrated, API key management will be necessary.
+### Token Safety Check (RugCheck.xyz Integration)
+To enhance security and reduce the risk of trading malicious tokens, the bot integrates with the [RugCheck.xyz](https://rugcheck.xyz/) API.
+- **Functionality**: For each token that passes initial scanning criteria (like market cap), the bot queries the RugCheck.xyz API endpoint `RUGCHECK_API_ENDPOINT/{token_address}/report/summary`.
+- **Filtering Logic**: A token is deemed unsafe and filtered out if ANY of the following conditions are met, based on the API response and your configuration:
+    - **Score Threshold**: If the token's `scoreNormalised` (a 0-100 score from RugCheck, where higher is generally better) is *less than* the `RUGCHECK_SCORE_THRESHOLD` defined in your configuration.
+    - **Critical Risks**: If any risk reported by the API has a `name` that matches one of the names listed in your `RUGCHECK_CRITICAL_RISK_NAMES` configuration.
+    - **API Call Failure**: If the API call fails, returns an error, or the response cannot be parsed, the token is typically treated as unsafe by default.
+- **Logging**: Detailed reasons for failing the safety check (e.g., low score, specific critical risks found) are logged. Passed checks are also logged with key metrics like the `scoreNormalised`.
+- **API Key**: The bot can be configured with an optional `RUGCHECK_API_KEY`. While the `/report/summary` endpoint might not strictly require it for basic access, providing a key (using the `X-API-Key` header) is good practice and may be necessary for higher rate limits or other API features.
+- **Note**: The effectiveness of this filter depends on the accuracy of the RugCheck.xyz API and the configured `RUGCHECK_SCORE_THRESHOLD` and `RUGCHECK_CRITICAL_RISK_NAMES`. These parameters should be set according to your risk tolerance. The interpretation of scores and risk names from RugCheck.xyz is based on their API documentation (e.g., their Swagger spec).
 
 ### Social Media Sentiment (Placeholder)
 Understanding the social media sentiment around a token can provide additional trading insights.

@@ -211,21 +211,33 @@ class SolanaTrader:
         """Determine if we should enter a trade based on multiple factors"""
         log_prefix = f"Token {token_address}:" # For consistent logging within this function
 
-        if rugcheck_data:
-            logger.debug(f"{log_prefix} Received Rugcheck data: Risk Level='{rugcheck_data.get('risk_level', 'N/A')}', Is Safe='{rugcheck_data.get('is_safe', 'N/A')}'")
-            # logger.debug(f"{log_prefix} Full Rugcheck details: {rugcheck_data.get('details')}") # Potentially too verbose for debug
+        # Initial safety check based on rugcheck_data passed from scanner
+        if rugcheck_data: # Check if rugcheck_data is provided
+            is_safe_from_rugcheck = rugcheck_data.get('is_safe', False) # Default to False if 'is_safe' key is missing
+            if not is_safe_from_rugcheck:
+                reasons = rugcheck_data.get('reasons', ['No specific reason provided'])
+                # Use logger from the module scope
+                logger.info(f"{log_prefix} Deemed unsafe by RugCheck data passed to should_trade. Reasons: {reasons}. Skipping trade consideration.")
+                return False, f"Token unsafe per Rugcheck: {', '.join(reasons)}"
         else:
-            logger.debug(f"{log_prefix} No Rugcheck data provided to should_trade.")
+            # This case should ideally not happen if scanner always provides rugcheck_assessment
+            logger.warning(f"{log_prefix} No Rugcheck data provided to should_trade. Proceeding with caution / without safety check at trader level.")
+            # Depending on policy, could return False here:
+            # return False, "Missing RugCheck data, cannot assess safety."
+
+
+        # Log received Rugcheck and Sentiment data for debugging/transparency (if not already filtered out)
+        if rugcheck_data: # Log again or just the parts relevant for TA if needed
+            logger.debug(f"{log_prefix} Proceeding with TA for token after passing initial RugCheck screen in should_trade. "
+                         f"Is Safe: {rugcheck_data.get('is_safe')}, "
+                         f"Score: {rugcheck_data.get('score_normalised', rugcheck_data.get('score', 'N/A'))}")
 
         if sentiment_data:
-            logger.debug(f"{log_prefix} Received Sentiment data: Sentiment='{sentiment_data.get('sentiment', 'N/A')}', Score='{sentiment_data.get('sentiment_score', 'N/A')}'")
+            logger.debug(f"{log_prefix} Received Sentiment data in should_trade: Sentiment='{sentiment_data.get('sentiment', 'N/A')}', Score='{sentiment_data.get('sentiment_score', 'N/A')}'")
         else:
-            logger.debug(f"{log_prefix} No Sentiment data provided to should_trade.")
+            logger.debug(f"{log_prefix} No Sentiment data provided to should_trade for TA stage.")
 
-        # TODO: Incorporate rugcheck_data (e.g., risk_level, is_safe) into trading decision logic.
-        # Example: if rugcheck_data and not rugcheck_data.get('is_safe'): return False, "Token deemed unsafe by RugCheck."
-
-        # TODO: Incorporate sentiment_data (e.g., sentiment_score) into trading decision logic.
+        # TODO: Incorporate actual sentiment_data (e.g., sentiment_score) into trading decision logic.
         # Example: if sentiment_data and sentiment_data.get('sentiment_score', 0.5) < 0.3: return False, "Sentiment too negative."
 
         try:
@@ -233,7 +245,7 @@ class SolanaTrader:
             price_history = await self.get_price_history(token_address) # Placeholder
             volume_history = await self.get_volume_history(token_address) # Placeholder
             
-            if not price_history or not volume_history or len(price_history) < 2 or len(volume_history) < 2: # Ensure enough data for diff etc.
+            if not price_history or not volume_history or len(price_history) < 2 or len(volume_history) < 2: # Ensure enough data for TA
                 return False, "Insufficient historical data"
 
             # Calculate technical indicators
@@ -684,9 +696,14 @@ class SolanaTrader:
                             logger.info(
                                 f"Processing Token: {token_symbol} ({token_address}) - "
                                 f"Scanner Price: ${current_price_from_scanner:.6f}, "
-                                f"Rugcheck: {rugcheck_assessment.get('risk_level', 'N/A')} (Safe: {rugcheck_assessment.get('is_safe', 'Unknown')}), "
-                                f"Sentiment: {social_sentiment.get('sentiment', 'N/A')} (Score: {social_sentiment.get('sentiment_score', 'N/A')})"
+                                f"RugCheck Safe: {rugcheck_assessment.get('is_safe')}, "
+                                f"ScoreNorm: {rugcheck_assessment.get('score_normalised', 'N/A')}, "
+                                f"Reasons: {'; '.join(rugcheck_assessment.get('reasons',[])) if rugcheck_assessment.get('reasons') else 'N/A'}, "
+                                f"Sentiment: {social_sentiment.get('sentiment','N/A')} ({social_sentiment.get('sentiment_score','N/A')})"
                             )
+
+                            # Note: Filtering based on rugcheck_assessment['is_safe'] is now done in the scanner.
+                            # Tokens reaching here should have passed that initial filter.
 
                             if token_address not in self.active_positions:
                                 if await self.check_token_contract(token_address): # Simulated
@@ -698,35 +715,29 @@ class SolanaTrader:
                                     )
                                     if should_trade_flag:
                                         try:
-                                            # current_price_for_sizing should ideally be the most up-to-date price
-                                            # For now, using the price from scanner data as before
                                             current_price_for_sizing = float(scanner_price_str) if scanner_price_str is not None else None
                                         except (ValueError, TypeError) as e:
-                                            logger.warning(f"Invalid price format ('{scanner_price_str}') from scanner for {token_symbol}. Skipping trade. Error: {e}")
+                                            logger.warning(f"Invalid price format ('{scanner_price_str}') from scanner for {token_symbol} while sizing. Skipping trade. Error: {e}")
                                             continue
 
                                         if current_price_for_sizing is None or current_price_for_sizing <= 0:
-                                            logger.warning(f"Cannot calculate position size for {token_symbol} due to invalid price: {current_price_for_sizing}. Skipping trade.")
+                                            logger.warning(f"Cannot calculate position size for {token_symbol} due to invalid/zero price from scanner: {current_price_for_sizing}. Skipping trade.")
                                             continue
 
-                                        # Volatility is hardcoded to 0.5, should ideally be calculated or fetched.
-                                        position_size = await self.calculate_position_size(current_price_for_sizing, 0.5)
+                                        position_size = await self.calculate_position_size(current_price_for_sizing, 0.5) # Volatility hardcoded
 
                                         if position_size > 0:
-                                            logger.info(f"Attempting to execute buy for {token_symbol} ({token_address}), Size: {position_size}, Reason: {reason}")
+                                            logger.info(
+                                                f"Attempting to execute buy for {token_symbol} ({token_address}), Size: {position_size}, Reason for trade: {reason}."
+                                            )
                                             if await self.execute_trade(token_address, position_size, is_buy=True):
-                                                # execute_trade now logs its own success/failure for opening position.
-                                                # Log additional details from scanner (already logged above mostly)
-                                                logger.info(f"  Scanner Data (supplemental) for {token_symbol}: Liquidity=${token_data.get('liquidity', 0):,.0f}, Vol24h=${token_data.get('volume_24h', 0):,.0f}, Holders={token_data.get('holders', 0)}")
-                                                buy_sell_ratio = token_data.get('buy_sell_ratio', 'N/A') # Already logged in scanner
-                                                # logger.info(f"  Buy/Sell Ratio: {buy_sell_ratio if isinstance(buy_sell_ratio, str) else f'{buy_sell_ratio:.2f}'}") # Redundant if logged by scanner
+                                                logger.info(f"  Trade for {token_symbol} initiated. Scanner Data (supplemental): Liquidity=${token_data.get('liquidity', 0):,.0f}, Vol24h=${token_data.get('volume_24h', 0):,.0f}, Holders={token_data.get('holders', 0)}")
                                         else:
                                             logger.info(f"Position size for {token_symbol} is zero. Skipping trade.")
-                                    # else: # Optional: log why not trading if reason is informative
-                                        # logger.debug(f"Not trading {token_symbol} ({token_address}). Reason: {reason}")
-                            # else: # Already in active positions
+                                    else:
+                                        logger.info(f"Token {token_symbol} ({token_address}) not traded. Reason from should_trade: {reason}")
+                            # else:
                                 # logger.debug(f"Token {token_symbol} ({token_address}) is already in active positions. Skipping buy consideration.")
-
                     else: # No potential tokens
                         logger.info("No potential tokens from scanner in this cycle.")
 
