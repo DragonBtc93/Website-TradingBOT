@@ -1,3 +1,5 @@
+This is a work in progress. Many modifications. Use at your own risk.
+
 # Solana Trading Bot
 
 An automated trading bot for Solana tokens with real-time monitoring and analysis capabilities.
