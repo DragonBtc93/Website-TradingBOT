@@ -1,6 +1,4 @@
-This is a work in progress. Many modifications. Use at your own risk.
 
-If you would like to support or tip me in Solana you can send SOL to 33DG9Nk5T8wqQ9cSTjH7fcHrVh38PPHArLkcfknmk5BW
 
 # Solana Trading Bot
 
