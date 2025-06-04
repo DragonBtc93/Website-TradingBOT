@@ -123,8 +123,14 @@ RUGCHECK_SCORE_THRESHOLD = get_env_var("RUGCHECK_SCORE_THRESHOLD", 70, int)
 # Default is a comma-separated string, parsed by get_env_var into a list.
 RUGCHECK_CRITICAL_RISK_NAMES = get_env_var(
     "RUGCHECK_CRITICAL_RISK_NAMES",
-    "MutableMetadata,MintAuthorityEnabled,FreezeAuthorityEnabled,HighPrivilegedFunctions,Honeypot",
+    "Honeypot,RugpullHistory,ProxyContract,UnverifiedSourceCode,MintAuthorityEnabled,FreezeAuthorityEnabled,MutableMetadata,HighPrivilegedFunctions",
     list
 )
+
+# RugCheck.xyz JWT Authentication (if needed for specific endpoints or higher rate limits)
+# IMPORTANT: RUGCHECK_AUTH_SOLANA_PRIVATE_KEY is extremely sensitive. Handle with utmost care.
+# These are intended for generating a JWT to authenticate with RugCheck.xyz, not for general wallet operations.
+RUGCHECK_AUTH_SOLANA_PRIVATE_KEY = get_env_var("RUGCHECK_AUTH_SOLANA_PRIVATE_KEY", None, str)
+RUGCHECK_AUTH_WALLET_PUBLIC_KEY = get_env_var("RUGCHECK_AUTH_WALLET_PUBLIC_KEY", None, str)
 
 ```

@@ -3,14 +3,20 @@ import logging
 from datetime import datetime, timedelta
 import aiohttp
 import pandas as pd
+from typing import Optional # For type hinting
+
 # Import necessary config variables explicitly for clarity and correctness
 from .config import (
     DEXSCREENER_API, TARGET_MARKET_CAP_TO_SCAN, MAX_MARKET_CAP, MAX_TOKEN_AGE_HOURS,
     MIN_LIQUIDITY, MIN_TRANSACTIONS, MIN_BUY_SELL_RATIO, VOLUME_SPIKE_THRESHOLD,
     MIN_HOLDER_COUNT,
-    RUGCHECK_API_ENDPOINT, RUGCHECK_API_KEY,
+    RUGCHECK_API_ENDPOINT,
+    RUGCHECK_API_KEY as STATIC_RUGCHECK_API_KEY_OR_JWT, # Renamed for clarity
+    RUGCHECK_AUTH_SOLANA_PRIVATE_KEY,
+    RUGCHECK_AUTH_WALLET_PUBLIC_KEY,
     RUGCHECK_SCORE_THRESHOLD, RUGCHECK_CRITICAL_RISK_NAMES
 )
+from .auth_utils import get_rugcheck_jwt
 
 
 logging.basicConfig(level=logging.INFO)
@@ -18,13 +24,79 @@ logger = logging.getLogger(__name__)
 
 class TokenScanner:
     def __init__(self):
-        self.session = None
+        self.session: Optional[aiohttp.ClientSession] = None
         self.potential_tokens = []
         self.scan_count = 0
+        # Initialize with a static API key or JWT from config if provided.
+        # This will be overwritten by a dynamically generated JWT if dynamic generation is successful.
+        self.rugcheck_jwt: Optional[str] = STATIC_RUGCHECK_API_KEY_OR_JWT
+        self.rugcheck_jwt_generation_attempted: bool = False
+
+    async def _ensure_rugcheck_jwt(self) -> None:
+        """
+        Ensures a RugCheck.xyz JWT is available, attempting to generate one if needed.
+        Uses a static JWT from config (STATIC_RUGCHECK_API_KEY_OR_JWT) if available and no dynamic keys are set.
+        If dynamic keys (RUGCHECK_AUTH_SOLANA_PRIVATE_KEY & RUGCHECK_AUTH_WALLET_PUBLIC_KEY) are set,
+        it will attempt to generate a new JWT, potentially overwriting the static one.
+        Sets self.rugcheck_jwt.
+        """
+        # If a static JWT/API key is already loaded and we are not configured for dynamic generation,
+        # or if dynamic generation was already attempted, respect the current state.
+        if self.rugcheck_jwt and not (RUGCHECK_AUTH_SOLANA_PRIVATE_KEY and RUGCHECK_AUTH_WALLET_PUBLIC_KEY):
+            logger.info(f"Using static RugCheck API Key/JWT: {'Yes' if self.rugcheck_jwt else 'No'}")
+            return
+
+        if self.rugcheck_jwt_generation_attempted:
+            logger.debug("Skipping RugCheck JWT dynamic generation attempt as it was already tried.")
+            return
+
+        self.rugcheck_jwt_generation_attempted = True # Mark that we are trying dynamic generation now
+
+        if RUGCHECK_AUTH_SOLANA_PRIVATE_KEY and RUGCHECK_AUTH_WALLET_PUBLIC_KEY:
+            logger.info("Attempting to dynamically generate RugCheck.xyz JWT using configured private/public key pair...")
+
+            session_to_use = self.session
+            temp_session_created = False
+            if not session_to_use or session_to_use.closed:
+                logger.warning("TokenScanner session not available or closed for JWT generation. Creating temporary session.")
+                session_to_use = aiohttp.ClientSession()
+                temp_session_created = True
+
+            try:
+                generated_jwt = await get_rugcheck_jwt(
+                    session_to_use,
+                    RUGCHECK_AUTH_SOLANA_PRIVATE_KEY,
+                    RUGCHECK_AUTH_WALLET_PUBLIC_KEY
+                    # auth_url can be added here if it needs to be configurable too
+                )
+                if generated_jwt:
+                    self.rugcheck_jwt = generated_jwt # This overwrites any static key/JWT
+                    logger.info("Successfully generated and set new RugCheck.xyz JWT.")
+                else:
+                    logger.warning("Failed to dynamically generate RugCheck.xyz JWT. "
+                                   f"Will rely on static key/JWT if previously set ('{STATIC_RUGCHECK_API_KEY_OR_JWT is not None}'), "
+                                   "or proceed unauthenticated for RugCheck.")
+                    # If dynamic fails, and a static one was there, self.rugcheck_jwt retains the static one (initial value).
+                    # If no static one was there, self.rugcheck_jwt remains None.
+                    if not STATIC_RUGCHECK_API_KEY_OR_JWT: # If no static key to fall back on
+                        self.rugcheck_jwt = None
+            finally:
+                if temp_session_created:
+                    await session_to_use.close()
+                    logger.debug("Temporary session for JWT generation closed.")
+        elif self.rugcheck_jwt: # No dynamic keys, but static key was present
+             logger.info(f"Using static RugCheck API Key/JWT. Dynamic generation not configured (missing private/public keys).")
+        else: # No static key and no dynamic keys
+            logger.info("No static RugCheck JWT/API key provided and no private/public keys configured for dynamic JWT generation. RugCheck requests will be unauthenticated.")
+
 
     async def initialize(self):
-        self.session = aiohttp.ClientSession()
-        logger.info("Token scanner initialized")
+        if not self.session or self.session.closed: # Ensure session is only created if needed
+            self.session = aiohttp.ClientSession()
+            logger.info("Token scanner aiohttp session initialized.")
+        else:
+            logger.info("Token scanner aiohttp session already initialized.")
+        await self._ensure_rugcheck_jwt() # Attempt to get JWT after session is ready
 
     async def close(self):
         if self.session:
@@ -211,12 +283,13 @@ class TokenScanner:
         Uses configuration from config.py for API endpoint, score thresholds, and critical risk names.
         """
         url = f"{RUGCHECK_API_ENDPOINT}/{token_address}/report/summary"
-        headers = {"Content-Type": "application/json"}
-        if RUGCHECK_API_KEY:
-            headers["X-API-Key"] = RUGCHECK_API_KEY # Corrected header based on typical usage
-            logger.debug(f"Using RugCheck API Key for request to {url}")
+        headers = {"Accept": "application/json"} # Good practice
+        if self.rugcheck_jwt:
+            # Assuming the token (static or generated) is a JWT for Bearer authentication
+            headers["Authorization"] = f"Bearer {self.rugcheck_jwt}"
+            logger.debug(f"Using JWT for RugCheck API request to {url}.")
         else:
-            logger.debug(f"No RugCheck API Key for {url}. Proceeding without authentication.")
+            logger.debug(f"No JWT available for RugCheck API request to {url}. Attempting unauthenticated request.")
 
         default_result = lambda reasons_list, err_msg: {
             'is_safe': False, 'score': None, 'score_normalised': None,
@@ -226,8 +299,9 @@ class TokenScanner:
         if not token_address:
             return default_result(['No token address provided.'], 'No token address provided.')
 
-        logger.info(f"Querying RugCheck summary for {token_address}")
+        logger.info(f"Querying RugCheck summary for {token_address}") # URL logged by caller if needed
         try:
+            # Use the 'session' argument passed to this method, not self.session directly unless intended
             async with session.get(url, headers=headers, timeout=20) as response:
                 raw_response_text = await response.text()
                 status_code = response.status
@@ -258,18 +332,31 @@ class TokenScanner:
                 # Critical risks check
                 if isinstance(api_risks, list):
                     for risk in api_risks:
-                        if risk.get('name') in RUGCHECK_CRITICAL_RISK_NAMES:
-                            is_safe = False; reasons.append(f"Critical risk: {risk.get('name')} - {risk.get('description','N/A')}")
+                        risk_name = risk.get('name')
+                        if risk_name in RUGCHECK_CRITICAL_RISK_NAMES:
+                            is_safe = False
+                            reason_description = f"Critical risk: {risk_name} - {risk.get('description','N/A')}"
+                            reasons.append(reason_description)
+                            # Ensure token_address is available for this log. It's a parameter of the parent function.
+                            logger.warning(f"Token {token_address}: {reason_description}") # More visible log for critical issues
+
+                            # Specific logging for authority risks
+                            if risk_name == "MintAuthorityEnabled":
+                                logger.warning(f"Token {token_address}: Mint authority is ENABLED.")
+                            elif risk_name == "FreezeAuthorityEnabled":
+                                logger.warning(f"Token {token_address}: Freeze authority is ENABLED.")
                 else:
-                    reasons.append("'risks' field invalid/missing"); # is_safe not changed for this alone, score might still be good
+                    reasons.append("'risks' field invalid/missing");
+                    logger.warning(f"Token {token_address}: 'risks' field from RugCheck was invalid or missing.")
+                    # Depending on policy, could set is_safe = False if a valid risk list is essential
 
                 return {
                     'is_safe': is_safe, 'score': score, 'score_normalised': score_normalised,
                     'risks': api_risks, 'reasons': reasons, 'api_error': None
                 }
-        except aiohttp.ClientResponseError as e: return default_result([f"HTTP error: {e.status}"], str(e))
+        except aiohttp.ClientResponseError as e: return default_result([f"HTTP error: {e.status} - {e.message}"], str(e)) # Include e.message
         except asyncio.TimeoutError: return default_result(["API call timed out"], "Timeout")
-        except aiohttp.ContentTypeError as e: return default_result(["JSON decode error"], str(e))
+        except aiohttp.ContentTypeError as e: return default_result(["JSON decode error"], str(e)) # ContentTypeError might not have a clean .message
         except Exception as e:
             logger.error(f"Unexpected error in verify_token_safety_rugcheck for {token_address}: {e}", exc_info=True)
             return default_result([f"Unexpected error: {str(e)}"], str(e))
