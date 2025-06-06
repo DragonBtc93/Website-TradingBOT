@@ -1,14 +1,21 @@
 import asyncio
 import logging
 from datetime import datetime
-import base58
 # import requests # No longer used directly, will use aiohttp
 import aiohttp
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 
-from .config import TRAILING_STOP_LOSS_PERCENTAGE # Import for trailing stop loss
+# Updated config imports
+from .config import (
+    STOP_LOSS_PERCENTAGE, # Now used directly from config
+    TRAILING_STOP_LOSS_PERCENTAGE,
+    TRADER_MAX_POSITION_SIZE,
+    TRADER_DEFAULT_TAKE_PROFIT_PCT,
+    MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD,
+    BOLLINGER_WINDOW, BOLLINGER_STD_DEV
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,15 +39,18 @@ class SolanaTrader:
             'total_profit_loss': 0,
             'win_rate': 0
         }
-        # Risk management parameters
-        self.max_position_size = 0.1  # Maximum 10% of portfolio per trade
-        self.stop_loss_pct = 0.05     # 5% stop loss
-        self.take_profit_pct = 0.15   # 15% take profit
-        self.max_drawdown = 0.20      # 20% maximum drawdown
+        # Risk management parameters from config
+        self.max_position_size = TRADER_MAX_POSITION_SIZE
+        # STOP_LOSS_PERCENTAGE from config is e.g. 12.0 for 12%. Convert to multiplier.
+        self.stop_loss_pct = STOP_LOSS_PERCENTAGE / 100.0
+        # TRADER_DEFAULT_TAKE_PROFIT_PCT from config is e.g. 0.15 for 15%. Used directly.
+        self.take_profit_pct = TRADER_DEFAULT_TAKE_PROFIT_PCT
+        # self.max_drawdown = 0.20 # Removed
         
-        # Technical indicator parameters
-        self.macd_params = {'fast': 12, 'slow': 26, 'signal': 9}
-        self.bollinger_params = {'window': 20, 'num_std': 2}
+        # Technical indicator parameters from config
+        self.macd_params = {'fast': MACD_FAST_PERIOD, 'slow': MACD_SLOW_PERIOD, 'signal': MACD_SIGNAL_PERIOD}
+        self.bollinger_params = {'window': BOLLINGER_WINDOW, 'num_std': BOLLINGER_STD_DEV}
+        # Other TA params remain hardcoded for now, can be made configurable similarly if needed
         self.stoch_params = {'k_window': 14, 'd_window': 3}
         self.roc_window = 12
         self.ichimoku_params = {

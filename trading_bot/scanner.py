@@ -11,7 +11,7 @@ from .config import (
     MIN_LIQUIDITY, MIN_TRANSACTIONS, MIN_BUY_SELL_RATIO, VOLUME_SPIKE_THRESHOLD,
     MIN_HOLDER_COUNT,
     RUGCHECK_API_ENDPOINT,
-    RUGCHECK_API_KEY as STATIC_RUGCHECK_API_KEY_OR_JWT, # Renamed for clarity
+    STATIC_RUGCHECK_JWT, # Updated variable name
     RUGCHECK_AUTH_SOLANA_PRIVATE_KEY,
     RUGCHECK_AUTH_WALLET_PUBLIC_KEY,
     RUGCHECK_SCORE_THRESHOLD, RUGCHECK_CRITICAL_RISK_NAMES
@@ -27,9 +27,9 @@ class TokenScanner:
         self.session: Optional[aiohttp.ClientSession] = None
         self.potential_tokens = []
         self.scan_count = 0
-        # Initialize with a static API key or JWT from config if provided.
+        # Initialize with a static JWT from config if provided.
         # This will be overwritten by a dynamically generated JWT if dynamic generation is successful.
-        self.rugcheck_jwt: Optional[str] = STATIC_RUGCHECK_API_KEY_OR_JWT
+        self.rugcheck_jwt: Optional[str] = STATIC_RUGCHECK_JWT
         self.rugcheck_jwt_generation_attempted: bool = False
 
     async def _ensure_rugcheck_jwt(self) -> None:
@@ -40,10 +40,10 @@ class TokenScanner:
         it will attempt to generate a new JWT, potentially overwriting the static one.
         Sets self.rugcheck_jwt.
         """
-        # If a static JWT/API key is already loaded and we are not configured for dynamic generation,
+        # If a static JWT is already loaded and we are not configured for dynamic generation,
         # or if dynamic generation was already attempted, respect the current state.
         if self.rugcheck_jwt and not (RUGCHECK_AUTH_SOLANA_PRIVATE_KEY and RUGCHECK_AUTH_WALLET_PUBLIC_KEY):
-            logger.info(f"Using static RugCheck API Key/JWT: {'Yes' if self.rugcheck_jwt else 'No'}")
+            logger.info(f"Using static RugCheck JWT: {'Yes' if self.rugcheck_jwt else 'No'}")
             return
 
         if self.rugcheck_jwt_generation_attempted:
@@ -74,20 +74,20 @@ class TokenScanner:
                     logger.info("Successfully generated and set new RugCheck.xyz JWT.")
                 else:
                     logger.warning("Failed to dynamically generate RugCheck.xyz JWT. "
-                                   f"Will rely on static key/JWT if previously set ('{STATIC_RUGCHECK_API_KEY_OR_JWT is not None}'), "
+                                   f"Will rely on static JWT if previously set ('{STATIC_RUGCHECK_JWT is not None}'), "
                                    "or proceed unauthenticated for RugCheck.")
-                    # If dynamic fails, and a static one was there, self.rugcheck_jwt retains the static one (initial value).
-                    # If no static one was there, self.rugcheck_jwt remains None.
-                    if not STATIC_RUGCHECK_API_KEY_OR_JWT: # If no static key to fall back on
-                        self.rugcheck_jwt = None
+                    # If dynamic fails, and a static one was there, self.rugcheck_jwt retains the static one (initial value from __init__).
+                    # If no static one was there, self.rugcheck_jwt remains None (or whatever it was if dynamic gen failed).
+                    if not STATIC_RUGCHECK_JWT: # If no static JWT was configured to fall back on
+                        self.rugcheck_jwt = None # Ensure it's None if dynamic fails and no static was there
             finally:
                 if temp_session_created:
                     await session_to_use.close()
                     logger.debug("Temporary session for JWT generation closed.")
-        elif self.rugcheck_jwt: # No dynamic keys, but static key was present
-             logger.info(f"Using static RugCheck API Key/JWT. Dynamic generation not configured (missing private/public keys).")
-        else: # No static key and no dynamic keys
-            logger.info("No static RugCheck JWT/API key provided and no private/public keys configured for dynamic JWT generation. RugCheck requests will be unauthenticated.")
+        elif self.rugcheck_jwt: # No dynamic keys, but static JWT was present
+             logger.info(f"Using static RugCheck JWT. Dynamic generation not configured (missing private/public keys).")
+        else: # No static JWT and no dynamic keys
+            logger.info("No static RugCheck JWT provided and no private/public keys configured for dynamic JWT generation. RugCheck requests will be unauthenticated.")
 
 
     async def initialize(self):
@@ -101,39 +101,6 @@ class TokenScanner:
     async def close(self):
         if self.session:
             await self.session.close()
-
-    async def fetch_token_data(self, token_address):
-        """Fetch detailed token data from DexScreener"""
-        try:
-            url = f"{DEXSCREENER_API}/tokens/{token_address}"
-            async with self.session.get(url) as response:
-                response.raise_for_status()
-                data = await response.json()
-                if not data or not data.get('pairs'):
-                    logger.warning(f"No pairs data in DexScreener response for token {token_address}")
-                    return None
-                return data['pairs'][0]
-        except Exception as e:
-            logger.error(f"Error fetching token data for {token_address}: {e}", exc_info=True)
-            return None
-
-    async def check_holder_metrics(self, token_data):
-        """Analyze holder metrics (basic)"""
-        token_symbol = token_data.get('baseToken', {}).get('symbol', 'Unknown')
-        log_prefix = f"Token {token_symbol} Holder Check:"
-        try:
-            holders_data = token_data.get('holders', {})
-            if not holders_data:
-                logger.debug(f"{log_prefix} No 'holders' data in provided token_data.")
-                return True, "Holder data not available"
-            total_holders = holders_data.get('total', 0)
-            if total_holders < MIN_HOLDER_COUNT:
-                return False, f"Insufficient holders: {total_holders} < {MIN_HOLDER_COUNT}"
-            logger.debug(f"{log_prefix} Holder count {total_holders} meets minimum.")
-            return True, "Holder metrics (basic count) passed"
-        except Exception as e:
-            logger.error(f"{log_prefix} Error: {e}", exc_info=True)
-            return False, str(e)
 
     def analyze_token_metrics(self, token_data):
         """Analyze token metrics based on our criteria"""
@@ -283,13 +250,13 @@ class TokenScanner:
         Uses configuration from config.py for API endpoint, score thresholds, and critical risk names.
         """
         url = f"{RUGCHECK_API_ENDPOINT}/{token_address}/report/summary"
-        headers = {"Accept": "application/json"} # Good practice
+        headers = {"Accept": "application/json"}
         if self.rugcheck_jwt:
-            # Assuming the token (static or generated) is a JWT for Bearer authentication
+            # Assuming self.rugcheck_jwt (whether static or dynamically generated) is a JWT requiring Bearer prefix.
             headers["Authorization"] = f"Bearer {self.rugcheck_jwt}"
             logger.debug(f"Using JWT for RugCheck API request to {url}.")
         else:
-            logger.debug(f"No JWT available for RugCheck API request to {url}. Attempting unauthenticated request.")
+            logger.debug(f"No JWT available/configured for RugCheck API request to {url}. Attempting unauthenticated request.")
 
         default_result = lambda reasons_list, err_msg: {
             'is_safe': False, 'score': None, 'score_normalised': None,
@@ -317,42 +284,51 @@ class TokenScanner:
 
                 is_safe = True; reasons = []
                 score = response_data.get('score')
-                score_normalised = response_data.get('scoreNormalised') # API uses 'scoreNormalised'
-                api_risks = response_data.get('risks', [])
+                score_normalised_value = response_data.get('scoreNormalised')
 
                 # Score check (RUGCHECK_SCORE_THRESHOLD is min acceptable, higher is better for score_normalised)
-                check_val = score_normalised if score_normalised is not None else score
-                if check_val is None:
-                    is_safe = False; reasons.append("Score missing")
-                elif not isinstance(check_val, (int, float)):
-                    is_safe = False; reasons.append(f"Score '{check_val}' not numeric")
-                elif check_val < RUGCHECK_SCORE_THRESHOLD:
-                    is_safe = False; reasons.append(f"Score {check_val} < threshold {RUGCHECK_SCORE_THRESHOLD}")
+                check_score = score_normalised_value if score_normalised_value is not None else score
+                if check_score is None:
+                    is_safe = False
+                    reasons.append("Score (normalised or raw) missing from RugCheck.")
+                elif not isinstance(check_score, (int, float)):
+                    is_safe = False
+                    reasons.append(f"Score ({check_score}) from RugCheck is not numeric.")
+                elif check_score < RUGCHECK_SCORE_THRESHOLD:
+                    is_safe = False
+                    reasons.append(f"Score ({check_score}) is below threshold ({RUGCHECK_SCORE_THRESHOLD}).")
 
-                # Critical risks check
-                if isinstance(api_risks, list):
-                    for risk in api_risks:
+                # Risks field handling
+                api_risks_raw = response_data.get('risks') # Get raw value first
+                api_risks_for_iteration = [] # Default to empty list for iteration logic
+
+                if api_risks_raw is None: # Key was missing entirely
+                    logger.info(f"Token {token_address}: 'risks' field missing from RugCheck response. Cannot check for specific critical risk names.")
+                    # reasons.append("Risk details list (risks field) missing from RugCheck response.") # Optional, can make reasons noisy
+                elif not isinstance(api_risks_raw, list): # Present but not a list
+                    is_safe = False # Mark unsafe due to malformed risk data
+                    malformed_reason = "Malformed 'risks' field in RugCheck API response (expected a list)."
+                    reasons.append(malformed_reason)
+                    logger.warning(f"Token {token_address}: {malformed_reason} Got {type(api_risks_raw).__name__}. Marking unsafe.")
+                else: # It's a list, so safe to iterate
+                    api_risks_for_iteration = api_risks_raw
+                    for risk in api_risks_for_iteration: # Iterate the valid list
                         risk_name = risk.get('name')
                         if risk_name in RUGCHECK_CRITICAL_RISK_NAMES:
-                            is_safe = False
+                            is_safe = False # This can still be set by a critical risk even if score was good
                             reason_description = f"Critical risk: {risk_name} - {risk.get('description','N/A')}"
                             reasons.append(reason_description)
-                            # Ensure token_address is available for this log. It's a parameter of the parent function.
-                            logger.warning(f"Token {token_address}: {reason_description}") # More visible log for critical issues
+                            logger.warning(f"Token {token_address}: {reason_description}")
 
-                            # Specific logging for authority risks
                             if risk_name == "MintAuthorityEnabled":
                                 logger.warning(f"Token {token_address}: Mint authority is ENABLED.")
                             elif risk_name == "FreezeAuthorityEnabled":
                                 logger.warning(f"Token {token_address}: Freeze authority is ENABLED.")
-                else:
-                    reasons.append("'risks' field invalid/missing");
-                    logger.warning(f"Token {token_address}: 'risks' field from RugCheck was invalid or missing.")
-                    # Depending on policy, could set is_safe = False if a valid risk list is essential
 
                 return {
-                    'is_safe': is_safe, 'score': score, 'score_normalised': score_normalised,
-                    'risks': api_risks, 'reasons': reasons, 'api_error': None
+                    'is_safe': is_safe, 'score': score, 'score_normalised': score_normalised_value,
+                    'risks': api_risks_raw if api_risks_raw is not None else [], # Return original 'risks' value, or empty list if it was None
+                    'reasons': reasons, 'api_error': None
                 }
         except aiohttp.ClientResponseError as e: return default_result([f"HTTP error: {e.status} - {e.message}"], str(e)) # Include e.message
         except asyncio.TimeoutError: return default_result(["API call timed out"], "Timeout")

@@ -98,20 +98,21 @@ TAKE_PROFIT_LEVELS = get_env_var("TAKE_PROFIT_LEVELS", "[1.5, 2.0, 3.0, 5.0]", l
 # Technical analysis parameters
 VOLUME_SPIKE_THRESHOLD = get_env_var("VOLUME_SPIKE_THRESHOLD", "2.5", float)
 MIN_BUY_SELL_RATIO = get_env_var("MIN_BUY_SELL_RATIO", "0.65", float)
-CONSOLIDATION_PERIOD = get_env_var("CONSOLIDATION_PERIOD", "10", int)
+# CONSOLIDATION_PERIOD removed
 
 # Advanced filters
 MIN_HOLDER_COUNT = get_env_var("MIN_HOLDER_COUNT", "100", int)
-MAX_WALLET_CONCENTRATION = get_env_var("MAX_WALLET_CONCENTRATION", "10.0", float)
-MIN_LP_LOCKED_PERCENTAGE = get_env_var("MIN_LP_LOCKED_PERCENTAGE", "80.0", float)
+# MAX_WALLET_CONCENTRATION removed
+# MIN_LP_LOCKED_PERCENTAGE removed
 
 # API endpoints
 DEXSCREENER_API = get_env_var("DEXSCREENER_API", "https://api.dexscreener.com/latest/dex", str)
 JUPITER_API = get_env_var("JUPITER_API", "https://quote-api.jup.ag/v1", str)
 
 # RugCheck.xyz Configuration
-# Note: RUGCHECK_API_KEY might not be needed for GET /report/summary but good to have for other endpoints or future changes.
-RUGCHECK_API_KEY = get_env_var("RUGCHECK_API_KEY", None, str)
+# STATIC_RUGCHECK_JWT: Optional pre-obtained JWT for RugCheck.xyz.
+# If set, dynamic JWT generation (using private/public keys below) will be skipped.
+STATIC_RUGCHECK_JWT = get_env_var("STATIC_RUGCHECK_JWT", None, str)
 RUGCHECK_API_ENDPOINT = get_env_var("RUGCHECK_API_ENDPOINT", "https://api.rugcheck.xyz/v1/tokens", str)
 
 # Score threshold for RugCheck (0-100 for score_normalised or score if former not available).
@@ -126,6 +127,20 @@ RUGCHECK_CRITICAL_RISK_NAMES = get_env_var(
     "Honeypot,RugpullHistory,ProxyContract,UnverifiedSourceCode,MintAuthorityEnabled,FreezeAuthorityEnabled,MutableMetadata,HighPrivilegedFunctions",
     list
 )
+
+# Trader Specific Parameters
+TRADER_MAX_POSITION_SIZE = get_env_var("TRADER_MAX_POSITION_SIZE", "0.1", float) # Max portion of wallet balance for a single trade
+TRADER_DEFAULT_TAKE_PROFIT_PCT = get_env_var("TRADER_DEFAULT_TAKE_PROFIT_PCT", "0.15", float) # Default take profit % (e.g., 0.15 for 15%)
+
+# Technical Analysis - MACD
+MACD_FAST_PERIOD = get_env_var("MACD_FAST_PERIOD", "12", int)
+MACD_SLOW_PERIOD = get_env_var("MACD_SLOW_PERIOD", "26", int)
+MACD_SIGNAL_PERIOD = get_env_var("MACD_SIGNAL_PERIOD", "9", int)
+
+# Technical Analysis - Bollinger Bands
+BOLLINGER_WINDOW = get_env_var("BOLLINGER_WINDOW", "20", int)
+BOLLINGER_STD_DEV = get_env_var("BOLLINGER_STD_DEV", "2", int)
+# Note: STOP_LOSS_PERCENTAGE and TRAILING_STOP_LOSS_PERCENTAGE are already defined under Risk Management.
 
 # RugCheck.xyz JWT Authentication (if needed for specific endpoints or higher rate limits)
 # IMPORTANT: RUGCHECK_AUTH_SOLANA_PRIVATE_KEY is extremely sensitive. Handle with utmost care.

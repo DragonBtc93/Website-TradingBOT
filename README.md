@@ -51,14 +51,28 @@ cp .env.example .env
 - Configure risk management settings, including:
   - `STOP_LOSS_PERCENTAGE`: Standard stop-loss percentage from entry price.
   - `TRAILING_STOP_LOSS_PERCENTAGE`: Percentage for the trailing stop-loss feature (e.g., `5` for 5%).
-  - `MAX_POSITION_SIZE`: Maximum percentage of portfolio to allocate to a single trade.
-  - `TAKE_PROFIT_LEVELS`: Define multiple levels for taking profit.
-  - `TARGET_MARKET_CAP_TO_SCAN`: The minimum market capitalization (FDV) a token must reach for detailed analysis (e.g., `30000`).
+  - `STOP_LOSS_PERCENTAGE`: Initial stop-loss percentage from the entry price. For example, `12.0` means a 12% stop-loss. The bot converts this to a multiplier (e.g., 0.12) for calculations. Default: `12.0`.
+  - `TRAILING_STOP_LOSS_PERCENTAGE`: Percentage for the trailing stop-loss feature. For example, `5.0` means the stop-loss will trail 5% below the highest price reached since entry. Default: `5.0`.
+  - `MAX_POSITION_SIZE`: Maximum portion of your available wallet balance to allocate to a single trade (e.g., `0.1` for 10%). Default: `0.1`.
+  - `TAKE_PROFIT_LEVELS`: A JSON-style list of multipliers from the entry price for setting multiple take-profit orders (e.g., `[1.5, 2.0, 3.0, 5.0]` corresponds to 50%, 100%, 200%, and 400% profit targets). Note: Current trader logic uses `TRADER_DEFAULT_TAKE_PROFIT_PCT` for a single take profit; this list is for potential future enhancements. Default: `[1.5, 2.0, 3.0, 5.0]`.
+  - `TARGET_MARKET_CAP_TO_SCAN`: The minimum market capitalization (FDV) a token must reach for detailed analysis by the scanner. Default: `30000`.
+
+  - **Trader Operation Settings:**
+    - `TRADER_MAX_POSITION_SIZE`: Same as `MAX_POSITION_SIZE` above, but specifically used by the `SolanaTrader` class. Ensures consistency if used in different contexts, but typically they would be the same value. Default: `0.1`.
+    - `TRADER_DEFAULT_TAKE_PROFIT_PCT`: Default take-profit percentage used by the trader. For example, `0.15` means the trader will aim to take profit at a 15% price increase from the entry price. Default: `0.15`.
+
+  - **Technical Analysis Parameters (Trader):**
+    - `MACD_FAST_PERIOD`: The fast period (short EMA) for MACD calculation. Default: `12`.
+    - `MACD_SLOW_PERIOD`: The slow period (long EMA) for MACD calculation. Default: `26`.
+    - `MACD_SIGNAL_PERIOD`: The signal period (EMA of MACD line) for MACD calculation. Default: `9`.
+    - `BOLLINGER_WINDOW`: The look-back period (window) for Bollinger Bands calculation. Default: `20`.
+    - `BOLLINGER_STD_DEV`: The number of standard deviations for the upper and lower Bollinger Bands. Default: `2`.
+    *(Note: Other TA parameters like Stochastic, ROC, Ichimoku are currently hardcoded in `SolanaTrader` but could be made configurable in the future.)*
 
   - **RugCheck.xyz Configuration:**
     - `RUGCHECK_API_ENDPOINT`: The base URL for the RugCheck.xyz API (default: `https://api.rugcheck.xyz/v1/tokens`). Used to construct specific report URLs.
-    - `RUGCHECK_API_KEY`: Optional. Your static API key or a pre-obtained JWT for RugCheck.xyz. If provided, this may be used directly for authentication (e.g., in an `X-API-Key` header or `Authorization: Bearer {JWT}` if it's a JWT). If this is set, dynamic JWT generation using the private key below might be skipped. Default: `""`.
-    - `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`: Optional. The hex-encoded 32-byte seed of a Solana private key dedicated for RugCheck.xyz JWT generation. **EXTREMELY SENSITIVE - HANDLE WITH UTMOST CARE.** If this and the public key below are provided, the bot will attempt to generate a JWT for RugCheck API authentication. Default: `""`.
+    - `STATIC_RUGCHECK_JWT`: Optional. A pre-obtained JWT for RugCheck.xyz. If this is set, it will be used for `Authorization: Bearer` requests, and the dynamic JWT generation (using the private/public key pair below) will be skipped. Default: `""`.
+    - `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`: Optional. The hex-encoded 32-byte seed of a Solana private key dedicated for RugCheck.xyz JWT generation. **EXTREMELY SENSITIVE - HANDLE WITH UTMOST CARE.** If this and the public key below are provided (and `STATIC_RUGCHECK_JWT` is not set), the bot will attempt to generate a JWT for RugCheck API authentication. Default: `""`.
     - `RUGCHECK_AUTH_WALLET_PUBLIC_KEY`: Optional. The Solana public key (wallet address as a string) corresponding to `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`. Required if dynamic JWT generation is used. Default: `""`.
     - `RUGCHECK_SCORE_THRESHOLD`: The minimum `scoreNormalised` (0-100, where higher is generally better, e.g., less risky) a token must achieve from RugCheck.xyz. Tokens with a score *below* this threshold will be filtered out. Default: `70`.
     - `RUGCHECK_CRITICAL_RISK_NAMES`: A comma-separated list of specific risk names (case-sensitive) identified by RugCheck.xyz that are considered critical deal-breakers by this bot. If a token's report contains any of these risk names, it will be filtered out. Default: `"Honeypot,RugpullHistory,ProxyContract,UnverifiedSourceCode,MintAuthorityEnabled,FreezeAuthorityEnabled,MutableMetadata,HighPrivilegedFunctions"`.
@@ -129,9 +143,13 @@ To enhance security and reduce the risk of trading malicious tokens, the bot int
         1.  Signing a standard message ("Sign-in to Rugcheck.xyz") along with a timestamp using your configured Solana private key.
         2.  Sending this signature and public key to the RugCheck.xyz authentication endpoint (typically `https://api.rugcheck.xyz/v1/auth/login/solana`).
         3.  If successful, RugCheck.xyz returns a JWT. This JWT is then used for subsequent API requests in the `Authorization: Bearer {JWT}` header.
-    - **Static API Key/JWT (Fallback/Alternative)**: You can also provide a static API key or a pre-obtained JWT via the `RUGCHECK_API_KEY` environment variable.
-        - If `RUGCHECK_API_KEY` is set, it will be used directly (assumed to be a JWT for `Authorization: Bearer` header, unless RugCheck.xyz specifies a different usage for static keys like `X-API-Key`). Dynamic JWT generation will be skipped if this is present.
-    - **Unauthenticated Access**: If neither a static `RUGCHECK_API_KEY` nor the pair `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`/`RUGCHECK_AUTH_WALLET_PUBLIC_KEY` are provided, API requests will be made without authentication. This may lead to stricter rate limits or limited access.
+    - **Static JWT (Primary if set)**: You can provide a pre-obtained JWT via the `STATIC_RUGCHECK_JWT` environment variable.
+        - If `STATIC_RUGCHECK_JWT` is set, it will be used for `Authorization: Bearer {JWT}` requests. Dynamic JWT generation (using the private/public key pair) will be skipped.
+    - **JWT Generation (Fallback if dynamic keys provided)**: If `STATIC_RUGCHECK_JWT` is *not* set, but `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY` (hex-encoded 32-byte seed) and `RUGCHECK_AUTH_WALLET_PUBLIC_KEY` are provided, the bot will attempt to dynamically generate a JWT. This process involves:
+        1.  Signing a standard message ("Sign-in to Rugcheck.xyz") along with a timestamp using your configured Solana private key.
+        2.  Sending this signature and public key to the RugCheck.xyz authentication endpoint (typically `https://api.rugcheck.xyz/v1/auth/login/solana`).
+        3.  If successful, RugCheck.xyz returns a JWT, which is then used for subsequent API requests.
+    - **Unauthenticated Access**: If neither `STATIC_RUGCHECK_JWT` nor the pair for dynamic generation are provided, API requests will be made without authentication. This may lead to stricter rate limits or limited access.
 
     > **IMPORTANT SECURITY NOTICE: `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`**
     >
