@@ -60,7 +60,7 @@ cp .env.example .env
     - `RUGCHECK_API_KEY`: Optional. Your static API key or a pre-obtained JWT for RugCheck.xyz. If provided, this may be used directly for authentication (e.g., in an `X-API-Key` header or `Authorization: Bearer {JWT}` if it's a JWT). If this is set, dynamic JWT generation using the private key below might be skipped. Default: `""`.
     - `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`: Optional. The hex-encoded 32-byte seed of a Solana private key dedicated for RugCheck.xyz JWT generation. **EXTREMELY SENSITIVE - HANDLE WITH UTMOST CARE.** If this and the public key below are provided, the bot will attempt to generate a JWT for RugCheck API authentication. Default: `""`.
     - `RUGCHECK_AUTH_WALLET_PUBLIC_KEY`: Optional. The Solana public key (wallet address as a string) corresponding to `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`. Required if dynamic JWT generation is used. Default: `""`.
-    - `RUGCHECK_SCORE_THRESHOLD`: The minimum `scoreNormalised` (0-100, where higher is generally better, e.g., less risky) a token must achieve from RugCheck.xyz. Tokens with a score *below* this threshold will be filtered out. Default: `10`.
+    - `RUGCHECK_SCORE_THRESHOLD`: The minimum `scoreNormalised` (0-100, where higher is generally better, e.g., less risky) a token must achieve from RugCheck.xyz. Tokens with a score *below* this threshold will be filtered out. Default: `70`.
     - `RUGCHECK_CRITICAL_RISK_NAMES`: A comma-separated list of specific risk names (case-sensitive) identified by RugCheck.xyz that are considered critical deal-breakers by this bot. If a token's report contains any of these risk names, it will be filtered out. Default: `"Honeypot,RugpullHistory,ProxyContract,UnverifiedSourceCode,MintAuthorityEnabled,FreezeAuthorityEnabled,MutableMetadata,HighPrivilegedFunctions"`.
 
 ## Running the Bot
@@ -155,4 +155,19 @@ Understanding the social media sentiment around a token can provide additional t
 - **Future Work (`TODO`):**
     - Integrate with actual social media APIs (e.g., Twitter/X API, Reddit API) or sentiment analysis services (e.g., LunarCrush, Santiment).
     - Implement NLP (Natural Language Processing) techniques to analyze fetched text data and generate a sentiment score.
-    - Incorporate the sentiment score into the trading decision logic (e.g., avoiding tokens with very negative sentiment or prioritizing those with strong positive sentiment, combined with other 
+    - Incorporate the sentiment score into the trading decision logic (e.g., avoiding tokens with very negative sentiment or prioritizing those with strong positive sentiment, combined with other indicators).
+
+## Security
+
+- Never share your private key
+- Start with small position sizes
+- Monitor the bot regularly
+- Keep your system secure
+
+## Disclaimer
+
+This bot is for educational purposes only. Crypto trading carries significant risks. Always do your own research and never invest more than you can afford to lose.
+
+## License
+
+MIT License

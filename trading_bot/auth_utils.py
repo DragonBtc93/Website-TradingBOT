@@ -25,12 +25,6 @@ async def get_rugcheck_jwt(
         message_to_sign_bytes = message_text.encode('utf-8')
 
         try:
-            # PyNaCl's SigningKey expects the seed (private key part) which is typically the first 32 bytes of a Solana private key.
-            # Solana private keys are often represented as base58 encoded strings of 64 bytes (32 bytes seed + 32 bytes public key)
-            # or as a byte array/list of 64 bytes.
-            # If private_key_hex is the hex of a 64-byte key, we need the first 32 bytes for the seed.
-            # If private_key_hex is the hex of just the 32-byte seed, it's used directly.
-            # The problem states "private key (Hex format)". Assuming it's the 32-byte seed in hex.
             seed_bytes = HexEncoder.decode(private_key_hex)
             if len(seed_bytes) != 32:
                 logger.error(
@@ -43,7 +37,7 @@ async def get_rugcheck_jwt(
             return None
 
         signed_message = signing_key.sign(message_to_sign_bytes)
-        signature_bytes = signed_message.signature # This is the 64-byte signature
+        signature_bytes = signed_message.signature
 
         request_body = {
             "message": {
@@ -52,16 +46,13 @@ async def get_rugcheck_jwt(
                 "timestamp": timestamp
             },
             "signature": {
-                "data": list(signature_bytes), # Convert bytes to list of ints for JSON serialization
+                "data": list(signature_bytes),
                 "type": "ed25519"
             },
             "wallet": public_key
         }
 
         headers = {"Content-Type": "application/json"}
-        # Using json.dumps for the body ensures it's a valid JSON string.
-        # Log only a part of the body if it's too verbose or contains sensitive parts not already hidden.
-        # For now, logging the full body assuming it's for debug and structure is known.
         logger.debug(f"Attempting RugCheck JWT generation. URL: {auth_url}, Body: {json.dumps(request_body)}")
 
         async with session.post(auth_url, headers=headers, data=json.dumps(request_body), timeout=10) as response:
