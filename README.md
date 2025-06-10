@@ -19,18 +19,31 @@ An automated trading bot for Solana tokens with real-time monitoring and analysi
 
 ## Setup
 
-1. Clone the repository
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+Python 3.8 or higher is recommended for this bot.
 
-3. Copy `.env.example` to `.env` and configure your settings:
+1. Clone the repository
+
+2. **System Dependencies (Especially for Linux Users):**
+   Some Python packages, particularly those that build C extensions (like `pynacl` for Solana interactions, or potentially some data analysis libraries), may require system-level development tools. On Ubuntu/Debian-based systems, you can install common prerequisites with:
+   ```bash
+   sudo apt-get update && sudo apt-get install -y python3-dev build-essential libffi-dev libssl-dev
+   ```
+   This command installs Python development headers, build tools, and libraries for `libffi` and `OpenSSL`, which are common dependencies. For other operating systems, please refer to their specific package managers and required development toolchains.
+
+   *Note on TA-Lib (Optional):* The current `requirements.txt` does not directly include the `TA-Lib` Python wrapper, which requires the TA-Lib C library. However, if you later add TA libraries that depend on it (like `TA-Lib` itself), you would need to install the C library first. Instructions can be found on the TA-Lib project website. On Ubuntu, this often involves downloading the source, compiling, and installing it.
+
+3. Install Python dependencies:
+   After ensuring system dependencies are met (if any were needed), install the required Python packages using pip:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Copy `.env.example` to `.env` and configure your settings:
 ```bash
 cp .env.example .env
 ```
 
-4. Edit `.env` with your configuration.
+5. Edit `.env` with your configuration.
 
    **Important Security Notice: Managing Your `WALLET_PRIVATE_KEY`**
 
