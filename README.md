@@ -11,6 +11,7 @@ An automated trading bot for Solana tokens with real-time monitoring and analysi
 - **Targeted Market Cap Scanning**: Initiates detailed analysis only when a token's market cap reaches a configurable target (`TARGET_MARKET_CAP_TO_SCAN`), with an overall max (`MAX_MARKET_CAP`).
 - **Token Safety Check (RugCheck.xyz Integration)**: Queries the RugCheck.xyz API for token risk assessment and filters out tokens based on score and critical warnings.
 - **Social Media Sentiment (Placeholder)**: Simulates social media sentiment analysis; results are logged but not yet used for filtering.
+- **Pump.fun Token Filtering**: Optionally filters scans to focus only on tokens whose mint addresses end with a specific suffix (e.g., "pump"), configurable via environment variables.
 - Web-based dashboard (if applicable, or specify if it's CLI based)
 - Integration with Jupiter aggregator for best swap rates (for trade execution)
 - Multiple take-profit levels
@@ -69,6 +70,10 @@ cp .env.example .env
   - `MAX_POSITION_SIZE`: Maximum portion of your available wallet balance to allocate to a single trade (e.g., `0.1` for 10%). Default: `0.1`.
   - `TAKE_PROFIT_LEVELS`: A JSON-style list of multipliers from the entry price for setting multiple take-profit orders (e.g., `[1.5, 2.0, 3.0, 5.0]` corresponds to 50%, 100%, 200%, and 400% profit targets). Note: Current trader logic uses `TRADER_DEFAULT_TAKE_PROFIT_PCT` for a single take profit; this list is for potential future enhancements. Default: `[1.5, 2.0, 3.0, 5.0]`.
   - `TARGET_MARKET_CAP_TO_SCAN`: The minimum market capitalization (FDV) a token must reach for detailed analysis by the scanner. Default: `30000`.
+
+  - **Token Source & Specific Filtering:**
+    - `FILTER_FOR_PUMPFUN_ONLY`: Set to `true` to enable filtering for tokens that match the `PUMPFUN_ADDRESS_SUFFIX`. If `true`, only tokens whose mint address ends with the specified suffix will be processed further. If `false`, this filter is disabled. Expected Format: Boolean (`true` or `false`). Default: `true`.
+    - `PUMPFUN_ADDRESS_SUFFIX`: The case-sensitive suffix that a token's mint address should end with to be considered by the Pump.fun filter (if enabled by `FILTER_FOR_PUMPFUN_ONLY`). For example, `pump`. Expected Format: String. Default: `pump`. (Note: If `FILTER_FOR_PUMPFUN_ONLY` is `true` but this variable is empty, the suffix filter will effectively be disabled, and a warning will be logged.)
 
   - **Trader Operation Settings:**
     - `TRADER_MAX_POSITION_SIZE`: Same as `MAX_POSITION_SIZE` above, but specifically used by the `SolanaTrader` class. Ensures consistency if used in different contexts, but typically they would be the same value. Default: `0.1`.

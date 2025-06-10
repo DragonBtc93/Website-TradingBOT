@@ -128,6 +128,10 @@ RUGCHECK_CRITICAL_RISK_NAMES = get_env_var(
     list
 )
 
+# Pump.fun Token Filtering
+FILTER_FOR_PUMPFUN_ONLY = get_env_var("FILTER_FOR_PUMPFUN_ONLY", "true", bool)
+PUMPFUN_ADDRESS_SUFFIX = get_env_var("PUMPFUN_ADDRESS_SUFFIX", "pump", str)
+
 # Trader Specific Parameters
 TRADER_MAX_POSITION_SIZE = get_env_var("TRADER_MAX_POSITION_SIZE", "0.1", float) # Max portion of wallet balance for a single trade
 TRADER_DEFAULT_TAKE_PROFIT_PCT = get_env_var("TRADER_DEFAULT_TAKE_PROFIT_PCT", "0.15", float) # Default take profit % (e.g., 0.15 for 15%)

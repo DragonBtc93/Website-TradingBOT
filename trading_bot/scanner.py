@@ -11,10 +11,11 @@ from .config import (
     MIN_LIQUIDITY, MIN_TRANSACTIONS, MIN_BUY_SELL_RATIO, VOLUME_SPIKE_THRESHOLD,
     MIN_HOLDER_COUNT,
     RUGCHECK_API_ENDPOINT,
-    STATIC_RUGCHECK_JWT, # Updated variable name
+    STATIC_RUGCHECK_JWT,
     RUGCHECK_AUTH_SOLANA_PRIVATE_KEY,
     RUGCHECK_AUTH_WALLET_PUBLIC_KEY,
-    RUGCHECK_SCORE_THRESHOLD, RUGCHECK_CRITICAL_RISK_NAMES
+    RUGCHECK_SCORE_THRESHOLD, RUGCHECK_CRITICAL_RISK_NAMES,
+    FILTER_FOR_PUMPFUN_ONLY, PUMPFUN_ADDRESS_SUFFIX # Added Pump.fun filters
 )
 from .auth_utils import get_rugcheck_jwt
 
@@ -186,6 +187,17 @@ class TokenScanner:
                     token_symbol = base_token_info['symbol']
                     pair_address = pair_data.get('pairAddress', 'N/A')
                     log_prefix = f"Token {token_symbol} ({pair_address}, Mint: {base_token_address}):"
+
+                    # Pump.fun Suffix Filter (applied early)
+                    if FILTER_FOR_PUMPFUN_ONLY and PUMPFUN_ADDRESS_SUFFIX: # Ensure suffix is also set
+                        if not base_token_address.endswith(PUMPFUN_ADDRESS_SUFFIX):
+                            logger.debug(f"{log_prefix} Skipped: Token address '{base_token_address}' does not match suffix '{PUMPFUN_ADDRESS_SUFFIX}'.")
+                            continue # Skip to the next token
+                        else:
+                            logger.info(f"{log_prefix} Token address '{base_token_address}' matches suffix '{PUMPFUN_ADDRESS_SUFFIX}'. Proceeding with analysis.")
+                    elif FILTER_FOR_PUMPFUN_ONLY and not PUMPFUN_ADDRESS_SUFFIX:
+                        logger.warning(f"{log_prefix} Pump.fun filtering is enabled but PUMPFUN_ADDRESS_SUFFIX is not set. No suffix filtering will be applied.")
+                        # Proceed without suffix filtering in this specific warning case.
 
                     passed_primary_checks, reason = self.analyze_token_metrics(pair_data)
                     if not passed_primary_checks:
