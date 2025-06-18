@@ -116,8 +116,8 @@ STATIC_RUGCHECK_JWT = get_env_var("STATIC_RUGCHECK_JWT", None, str)
 RUGCHECK_API_ENDPOINT = get_env_var("RUGCHECK_API_ENDPOINT", "https://api.rugcheck.xyz/v1/tokens", str)
 
 # Score threshold for RugCheck (0-100 for score_normalised or score if former not available).
-# Assumed higher is better. Tokens with a score strictly BELOW this will be considered risky.
-RUGCHECK_SCORE_THRESHOLD = get_env_var("RUGCHECK_SCORE_THRESHOLD", 70, int)
+# Lower scores are better (safer). Tokens with a score strictly ABOVE this will be considered risky.
+RUGCHECK_SCORE_THRESHOLD = get_env_var("RUGCHECK_SCORE_THRESHOLD", 10, int)
 
 # Specific risk names considered critical. If any of these are present in a token's RugCheck report,
 # it will be considered unsafe. Case-sensitive.

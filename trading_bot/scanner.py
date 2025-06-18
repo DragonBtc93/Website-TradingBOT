@@ -306,9 +306,9 @@ class TokenScanner:
                 elif not isinstance(check_score, (int, float)):
                     is_safe = False
                     reasons.append(f"Score ({check_score}) from RugCheck is not numeric.")
-                elif check_score < RUGCHECK_SCORE_THRESHOLD:
+                elif check_score > RUGCHECK_SCORE_THRESHOLD: # Changed from < to >
                     is_safe = False
-                    reasons.append(f"Score ({check_score}) is below threshold ({RUGCHECK_SCORE_THRESHOLD}).")
+                    reasons.append(f"Score ({check_score}) is above threshold ({RUGCHECK_SCORE_THRESHOLD}).") # Updated reason
 
                 # Risks field handling
                 api_risks_raw = response_data.get('risks') # Get raw value first

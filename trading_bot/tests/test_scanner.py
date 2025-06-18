@@ -14,7 +14,7 @@ from trading_bot.config import (
     STATIC_RUGCHECK_JWT,
     RUGCHECK_AUTH_SOLANA_PRIVATE_KEY,
     RUGCHECK_AUTH_WALLET_PUBLIC_KEY,
-    RUGCHECK_SCORE_THRESHOLD,
+    RUGCHECK_SCORE_THRESHOLD, # Default is now 10, lower is better
     RUGCHECK_CRITICAL_RISK_NAMES,
     TARGET_MARKET_CAP_TO_SCAN,
     MAX_MARKET_CAP,
@@ -24,8 +24,8 @@ from trading_bot.config import (
     MIN_BUY_SELL_RATIO,
     VOLUME_SPIKE_THRESHOLD,
     MIN_HOLDER_COUNT,
-    FILTER_FOR_PUMPFUN_ONLY, # For patching
-    PUMPFUN_ADDRESS_SUFFIX # For patching
+    FILTER_FOR_PUMPFUN_ONLY,
+    PUMPFUN_ADDRESS_SUFFIX
 )
 
 logging.disable(logging.CRITICAL)
@@ -36,7 +36,7 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
         self.scanner = TokenScanner()
         self.scanner.rugcheck_jwt = None
         self.scanner.rugcheck_jwt_generation_attempted = False
-        self.scanner.potential_tokens = [] # Explicitly reset here for clarity for scan_new_tokens tests
+        self.scanner.potential_tokens = []
 
     async def asyncSetUp(self):
         if not self.scanner.session or self.scanner.session.closed:
@@ -47,7 +47,6 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
             await self.scanner.close()
 
     # --- Tests for _ensure_rugcheck_jwt ---
-    # [Existing tests for _ensure_rugcheck_jwt remain here - unchanged from previous step]
     @patch('trading_bot.scanner.get_rugcheck_jwt', new_callable=AsyncMock)
     async def test_ensure_jwt_uses_static_if_present_and_no_dynamic_keys(self, mock_auth_get_jwt):
         with patch('trading_bot.scanner.STATIC_RUGCHECK_JWT', "static_jwt_token_from_config"), \
@@ -125,29 +124,57 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
             await test_scanner_instance.close()
 
     # --- Tests for verify_token_safety_rugcheck ---
-    # [Existing tests for verify_token_safety_rugcheck remain here - unchanged from previous step]
-    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 70)
-    @patch('trading_bot.scanner.RUGCHECK_CRITICAL_RISK_NAMES', ["Honeypot", "Rugpull"])
+    # Test for a safe token based on score (lower score is better)
+    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 10)
+    @patch('trading_bot.scanner.RUGCHECK_CRITICAL_RISK_NAMES', []) # No critical risks for this test
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
-    async def test_rugcheck_safe_token_with_jwt(self, mock_aiohttp_get, _mock_crit, _mock_score):
+    async def test_rugcheck_safe_due_to_low_score(self, mock_aiohttp_get, _mock_crit_names, _mock_score_thresh):
         self.scanner.rugcheck_jwt = "test_jwt_for_header"
         mock_aiohttp_get.return_value.__aenter__.return_value.status = 200
         mock_aiohttp_get.return_value.__aenter__.return_value.json = AsyncMock(return_value={
-            "scoreNormalised": 80, "rugged": False, "risks": []})
-        result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_safe_token")
+            "scoreNormalised": 5, # Score is BELOW OR EQUAL to the threshold
+            "rugged": False,
+            "risks": []
+        })
+        result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_safe_low_score_token")
+
         self.assertTrue(result['is_safe'])
+        self.assertEqual(result['score_normalised'], 5)
+        self.assertEqual(result['reasons'], [])
         mock_aiohttp_get.assert_called_once()
         called_headers = mock_aiohttp_get.call_args[1].get('headers', {})
         self.assertEqual(called_headers.get('Authorization'), "Bearer test_jwt_for_header")
 
-    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 70)
+    # Test for an unsafe token due to high score
+    @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
+    @patch('trading_bot.scanner.RUGCHECK_CRITICAL_RISK_NAMES', [])
+    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 10)
+    async def test_rugcheck_unsafe_due_to_high_score(self, mock_aiohttp_get, mock_crit_names_patch, mock_score_thresh_patch):
+        mock_response = mock_aiohttp_get.return_value.__aenter__.return_value
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={
+            "scoreNormalised": 15, # Score is ABOVE the threshold of 10
+            "rugged": False,
+            "risks": []
+        })
+        mock_response.text = AsyncMock(return_value=json.dumps({
+            "scoreNormalised": 15, "rugged": False, "risks": []
+        }))
+
+        result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_token_high_score")
+
+        self.assertFalse(result['is_safe'])
+        self.assertIn("Score (15) is above threshold (10).", result['reasons'])
+
+    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 10) # Safe score
     @patch('trading_bot.scanner.RUGCHECK_CRITICAL_RISK_NAMES', ["Honeypot", "Rugpull"])
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
-    async def test_rugcheck_safe_token_no_jwt(self, mock_aiohttp_get, _mock_crit, _mock_score):
+    async def test_rugcheck_safe_token_no_jwt(self, mock_aiohttp_get, _mock_crit, _mock_score): # Renamed params for clarity
         self.scanner.rugcheck_jwt = None
         mock_aiohttp_get.return_value.__aenter__.return_value.status = 200
         mock_aiohttp_get.return_value.__aenter__.return_value.json = AsyncMock(return_value={
-            "scoreNormalised": 80, "rugged": False, "risks": []})
+            "scoreNormalised": 5, "rugged": False, "risks": [] # Good score
+        })
         result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_safe_token_no_jwt")
         self.assertTrue(result['is_safe'])
         mock_aiohttp_get.assert_called_once()
@@ -155,29 +182,21 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('Authorization', called_headers)
 
     @patch('trading_bot.scanner.RUGCHECK_CRITICAL_RISK_NAMES', ["Honeypot", "Rugpull", "MintAuthorityEnabled"])
-    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 70)
+    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 10) # Good score to isolate critical risk
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
     async def test_rugcheck_unsafe_mint_authority_enabled(self, mock_get, _mock_score, _mock_crit):
         mock_get.return_value.__aenter__.return_value.status = 200
         mock_get.return_value.__aenter__.return_value.json = AsyncMock(return_value={
-            "scoreNormalised": 85, "rugged": False,
-            "risks": [{"name": "MintAuthorityEnabled", "level": "critical", "description": "Token minting is still enabled."}]})
+            "scoreNormalised": 5, # Good score
+            "rugged": False,
+            "risks": [{"name": "MintAuthorityEnabled", "level": "critical", "description": "Token minting is still enabled."}]
+        })
         result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_mint_enabled_token")
         self.assertFalse(result['is_safe'])
         self.assertTrue(any("Critical risk: MintAuthorityEnabled" in reason for reason in result['reasons']))
 
-    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 50)
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
-    async def test_rugcheck_unsafe_low_score(self, mock_get, _mock_score_thresh):
-        mock_get.return_value.__aenter__.return_value.status = 200
-        mock_get.return_value.__aenter__.return_value.json = AsyncMock(return_value={
-            "scoreNormalised": 30, "rugged": False, "risks": []})
-        result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_low_score_token")
-        self.assertFalse(result['is_safe'])
-        self.assertIn("Score (30) is below threshold (50)", result['reasons'])
-
-    @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
-    async def test_rugcheck_api_error_client_error(self, mock_get):
+    async def test_rugcheck_api_error_client_error(self, mock_get): # Renamed from _from_previous
         mock_get.side_effect = aiohttp.ClientError("API Test Error")
         result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_api_error_token")
         self.assertFalse(result['is_safe'])
@@ -185,7 +204,7 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Unexpected error: API Test Error", result['api_error'])
 
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
-    async def test_rugcheck_token_not_found_404(self, mock_get):
+    async def test_rugcheck_token_not_found_404(self, mock_get): # Renamed from _from_previous
         mock_response = mock_get.return_value.__aenter__.return_value
         mock_response.status = 404
         mock_response.text = AsyncMock(return_value="Not Found")
@@ -195,35 +214,34 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Token not found (404)", result['api_error'])
 
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
-    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 70)
+    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 10) # Good score to isolate malformed risk
     async def test_rugcheck_malformed_risks_data(self, mock_aiohttp_get, _mock_score_thresh):
         mock_response = mock_aiohttp_get.return_value.__aenter__.return_value
         mock_response.status = 200
         malformed_risks = {"error": "should be a list"}
         mock_response.json = AsyncMock(return_value={
-            "scoreNormalised": 80, "rugged": False, "risks": malformed_risks })
+            "scoreNormalised": 5, "rugged": False, "risks": malformed_risks })
         mock_response.text = AsyncMock(return_value=json.dumps({
-            "scoreNormalised": 80, "rugged": False, "risks": malformed_risks}))
+            "scoreNormalised": 5, "rugged": False, "risks": malformed_risks}))
         result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_token_malformed_risks")
-        self.assertFalse(result['is_safe'])
+        self.assertFalse(result['is_safe']) # Now unsafe due to malformed risks
         self.assertIn("Malformed 'risks' field in RugCheck API response (expected a list).", result['reasons'])
         self.assertIsNone(result['api_error'])
         self.assertEqual(result['risks'], malformed_risks)
 
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
-    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 70)
+    @patch('trading_bot.scanner.RUGCHECK_SCORE_THRESHOLD', 10) # Good score
     async def test_rugcheck_missing_risks_data(self, mock_aiohttp_get, _mock_score_thresh):
         mock_response = mock_aiohttp_get.return_value.__aenter__.return_value
         mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={"scoreNormalised": 80, "rugged": False})
-        mock_response.text = AsyncMock(return_value=json.dumps({"scoreNormalised": 80, "rugged": False}))
+        mock_response.json = AsyncMock(return_value={"scoreNormalised": 5, "rugged": False}) # Risks key missing
+        mock_response.text = AsyncMock(return_value=json.dumps({"scoreNormalised": 5, "rugged": False}))
         result = await self.scanner.verify_token_safety_rugcheck(self.scanner.session, "test_token_missing_risks")
         self.assertTrue(result['is_safe'])
         self.assertEqual(result['reasons'], [])
-        self.assertIsNone(result['risks'])
+        self.assertIsNone(result['risks']) # Should be None as per current SUT logic if key is missing
 
     # --- Tests for analyze_token_metrics ---
-    # [Existing tests for analyze_token_metrics remain here - unchanged from previous step]
     @patch('trading_bot.scanner.TARGET_MARKET_CAP_TO_SCAN', 30000)
     def test_analyze_mcap_below_target(self, _mock_config_target_mcap):
         mock_token_data = {"baseToken": {"symbol": "T"}, "pairAddress": "P", "fdv": 20000}
@@ -253,7 +271,7 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(passed)
         self.assertIn("Token too old", reason)
 
-    # --- Tests for scan_new_tokens (Pump.fun filter logic) ---
+    # --- New Tests for scan_new_tokens (Pump.fun filter logic) ---
     @patch('trading_bot.scanner.FILTER_FOR_PUMPFUN_ONLY', True)
     @patch('trading_bot.scanner.PUMPFUN_ADDRESS_SUFFIX', "pump")
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
@@ -268,14 +286,11 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
                         "pairAddress": "pair1", "priceUsd": "10",
                         "liquidity": {"usd": "50000"}, "volume": {"h24": "100000"},
                         "fdv": "60000", "pairCreatedAt": datetime.now().timestamp() * 1000,
-                        "txns": {"h1": {"buys":10, "sells":5}},
-                        "priceChange": {"h1": 5}
-                       }]
-        })
+                        "txns": {"h1": {"buys":100, "sells":50}},
+                        "priceChange": {"h1": 5} }]})
         mock_analyze.return_value = (True, "Passed analysis")
-        mock_rugcheck.return_value = {'is_safe': True, 'reasons': [], 'score_normalised': 80, 'api_error': None, 'risks': []}
+        mock_rugcheck.return_value = {'is_safe': True, 'reasons': [], 'score_normalised': 5, 'api_error': None, 'risks': []} # Good score
         mock_sentiment.return_value = {'sentiment_score': 0.5, 'sentiment': 'neutral'}
-
         await self.scanner.scan_new_tokens()
         self.assertEqual(len(self.scanner.potential_tokens), 1)
         self.assertEqual(self.scanner.potential_tokens[0]['address'], "testtoken1pump")
@@ -285,19 +300,19 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
     @patch('trading_bot.scanner.PUMPFUN_ADDRESS_SUFFIX', "pump")
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
     @patch('trading_bot.scanner.TokenScanner.analyze_token_metrics', new_callable=AsyncMock)
-    # No need to patch rugcheck & sentiment as analyze_token_metrics won't be called
-    async def test_scan_new_tokens_pumpfun_filter_active_no_match(self, mock_analyze_metrics, mock_session_get):
+    @patch('trading_bot.scanner.TokenScanner.verify_token_safety_rugcheck', new_callable=AsyncMock)
+    @patch('trading_bot.scanner.TokenScanner.get_social_sentiment_placeholder', new_callable=AsyncMock)
+    async def test_scan_new_tokens_pumpfun_filter_active_no_match(self, mock_sentiment, mock_rugcheck, mock_analyze_metrics, mock_session_get):
         mock_api_response = mock_session_get.return_value.__aenter__.return_value
         mock_api_response.status = 200
         mock_api_response.json = AsyncMock(return_value={
-            "pairs": [{"baseToken": {"address": "testtoken2xyz", "symbol": "XYZ1"}, "pairAddress": "pair2"}]
-        })
-
+            "pairs": [{"baseToken": {"address": "testtoken2xyz", "symbol": "XYZ1"}, "pairAddress": "pair2"}]})
         await self.scanner.scan_new_tokens()
         self.assertEqual(len(self.scanner.potential_tokens), 0)
         mock_analyze_metrics.assert_not_called()
+        mock_rugcheck.assert_not_called()
 
-    @patch('trading_bot.scanner.FILTER_FOR_PUMPFUN_ONLY', False) # Filter INACTIVE
+    @patch('trading_bot.scanner.FILTER_FOR_PUMPFUN_ONLY', False)
     @patch('trading_bot.scanner.PUMPFUN_ADDRESS_SUFFIX', "pump")
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
     @patch('trading_bot.scanner.TokenScanner.analyze_token_metrics', new_callable=AsyncMock)
@@ -311,20 +326,16 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
                         "pairAddress": "pair3", "priceUsd": "20",
                         "liquidity": {"usd": "60000"}, "volume": {"h24": "120000"},
                         "fdv": "70000", "pairCreatedAt": datetime.now().timestamp() * 1000,
-                        "txns": {"h1": {"buys":10, "sells":5}},
-                        "priceChange": {"h1": 5}
-                       }]
-        })
+                        "txns": {"h1": {"buys":100, "sells":50}}, "priceChange": {"h1": 5}}]})
         mock_analyze.return_value = (True, "Passed analysis")
-        mock_rugcheck.return_value = {'is_safe': True, 'reasons': [], 'score_normalised': 80, 'api_error': None, 'risks': []}
+        mock_rugcheck.return_value = {'is_safe': True, 'reasons': [], 'score_normalised': 5, 'api_error': None, 'risks': []} # Good score
         mock_sentiment.return_value = {'sentiment_score': 0.5, 'sentiment': 'neutral'}
-
         await self.scanner.scan_new_tokens()
         self.assertEqual(len(self.scanner.potential_tokens), 1)
         self.assertEqual(self.scanner.potential_tokens[0]['address'], "testtoken3other")
 
     @patch('trading_bot.scanner.FILTER_FOR_PUMPFUN_ONLY', True)
-    @patch('trading_bot.scanner.PUMPFUN_ADDRESS_SUFFIX', "") # EMPTY suffix
+    @patch('trading_bot.scanner.PUMPFUN_ADDRESS_SUFFIX', "")
     @patch('aiohttp.ClientSession.get', new_callable=AsyncMock)
     @patch('trading_bot.scanner.TokenScanner.analyze_token_metrics', new_callable=AsyncMock)
     @patch('trading_bot.scanner.TokenScanner.verify_token_safety_rugcheck', new_callable=AsyncMock)
@@ -337,20 +348,15 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
                         "pairAddress": "pair4", "priceUsd": "30",
                         "liquidity": {"usd": "70000"}, "volume": {"h24": "130000"},
                         "fdv": "80000", "pairCreatedAt": datetime.now().timestamp() * 1000,
-                        "txns": {"h1": {"buys":10, "sells":5}},
-                        "priceChange": {"h1": 5}
-                        }]
-        })
+                        "txns": {"h1": {"buys":100, "sells":50}}, "priceChange": {"h1": 5}}]})
         mock_analyze.return_value = (True, "Passed analysis")
-        mock_rugcheck.return_value = {'is_safe': True, 'reasons': [], 'score_normalised': 80, 'api_error': None, 'risks': []}
+        mock_rugcheck.return_value = {'is_safe': True, 'reasons': [], 'score_normalised': 5, 'api_error': None, 'risks': []} # Good score
         mock_sentiment.return_value = {'sentiment_score': 0.5, 'sentiment': 'neutral'}
-
         await self.scanner.scan_new_tokens()
         self.assertEqual(len(self.scanner.potential_tokens), 1)
         self.assertEqual(self.scanner.potential_tokens[0]['address'], "testtoken4any")
 
     # --- Existing Tests for scan_new_tokens (general filtering) ---
-    # [These tests were here before, ensure they are still valid and correctly ordered/patched]
     @patch('trading_bot.scanner.TokenScanner.analyze_token_metrics')
     @patch('trading_bot.scanner.TokenScanner.verify_token_safety_rugcheck', new_callable=AsyncMock)
     @patch('trading_bot.scanner.TokenScanner.get_social_sentiment_placeholder', new_callable=AsyncMock)
@@ -361,8 +367,6 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
             "pairs": [{"baseToken": {"address": "addr1", "symbol": "UNSAFE"}, "pairAddress": "pair1", "dexId": "dex1"}]})
         mock_analyze_metrics.return_value = (True, "Passed primary analysis")
         mock_rugcheck.return_value = {"is_safe": False, "reasons": ["Test Unsafe by RugCheck"], "api_error": None}
-
-        # Ensure Pumpfun filter is off for this generic test
         with patch('trading_bot.scanner.FILTER_FOR_PUMPFUN_ONLY', False):
             await self.scanner.scan_new_tokens()
         self.assertEqual(len(self.scanner.potential_tokens), 0)
@@ -377,7 +381,6 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
         mock_dex_get.return_value.__aenter__.return_value.json = AsyncMock(return_value={
              "pairs": [{"baseToken": {"address": "addr2", "symbol": "FAILMETRIC"}, "pairAddress": "pair2", "dexId": "dex2"}]})
         mock_analyze_metrics.return_value = (False, "Failed metrics analysis")
-
         with patch('trading_bot.scanner.FILTER_FOR_PUMPFUN_ONLY', False):
             await self.scanner.scan_new_tokens()
         self.assertEqual(len(self.scanner.potential_tokens), 0)
@@ -407,19 +410,16 @@ class TestTokenScanner(unittest.IsolatedAsyncioTestCase):
             "holders": {"total": 200}}
         mock_dex_get.return_value.__aenter__.return_value.status = 200
         mock_dex_get.return_value.__aenter__.return_value.json = AsyncMock(return_value={"pairs": [mock_dex_pair_data]})
-        mock_rugcheck_assessment = {"is_safe": True, "score_normalised": 90, "reasons": [], "api_error": None}
+        mock_rugcheck_assessment = {"is_safe": True, "score_normalised": 90, "reasons": [], "api_error": None} # Good score
         mock_rugcheck.return_value = mock_rugcheck_assessment
         mock_sentiment.return_value = {"sentiment_score": 0.7, "sentiment": "positive"}
-
-        with patch('trading_bot.scanner.FILTER_FOR_PUMPFUN_ONLY', False): # Ensure pumpfun filter off for this generic test
+        with patch('trading_bot.scanner.FILTER_FOR_PUMPFUN_ONLY', False):
             await self.scanner.scan_new_tokens()
-
         self.assertEqual(len(self.scanner.potential_tokens), 1)
         added_token = self.scanner.potential_tokens[0]
         self.assertEqual(added_token['address'], test_token_addr)
         self.assertEqual(added_token['rugcheck_assessment'], mock_rugcheck_assessment)
         self.assertIn('social_sentiment', added_token)
-
 
 if __name__ == '__main__':
     unittest.main()

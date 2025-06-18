@@ -92,7 +92,7 @@ cp .env.example .env
     - `STATIC_RUGCHECK_JWT`: Optional. A pre-obtained JWT for RugCheck.xyz. If this is set, it will be used for `Authorization: Bearer` requests, and the dynamic JWT generation (using the private/public key pair below) will be skipped. Default: `""`.
     - `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`: Optional. The hex-encoded 32-byte seed of a Solana private key dedicated for RugCheck.xyz JWT generation. **EXTREMELY SENSITIVE - HANDLE WITH UTMOST CARE.** If this and the public key below are provided (and `STATIC_RUGCHECK_JWT` is not set), the bot will attempt to generate a JWT for RugCheck API authentication. Default: `""`.
     - `RUGCHECK_AUTH_WALLET_PUBLIC_KEY`: Optional. The Solana public key (wallet address as a string) corresponding to `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY`. Required if dynamic JWT generation is used. Default: `""`.
-    - `RUGCHECK_SCORE_THRESHOLD`: The minimum `scoreNormalised` (0-100, where higher is generally better, e.g., less risky) a token must achieve from RugCheck.xyz. Tokens with a score *below* this threshold will be filtered out. Default: `70`.
+    - `RUGCHECK_SCORE_THRESHOLD`: The maximum acceptable `scoreNormalised` (a 0-100 score from RugCheck.xyz, where **lower is better/safer**) a token must have. Tokens with a score *strictly above* this threshold will be filtered out. Default: `10`.
     - `RUGCHECK_CRITICAL_RISK_NAMES`: A comma-separated list of specific risk names (case-sensitive) identified by RugCheck.xyz that are considered critical deal-breakers by this bot. If a token's report contains any of these risk names, it will be filtered out. Default: `"Honeypot,RugpullHistory,ProxyContract,UnverifiedSourceCode,MintAuthorityEnabled,FreezeAuthorityEnabled,MutableMetadata,HighPrivilegedFunctions"`.
 
 ## Running the Bot
@@ -151,10 +151,10 @@ This feature helps to lock in profits while a trade is performing well and prote
 To enhance security and reduce the risk of trading malicious tokens, the bot integrates with the [RugCheck.xyz](https://rugcheck.xyz/) API.
 - **Functionality**: For each token that passes initial scanning criteria (like market cap), the bot queries the RugCheck.xyz API endpoint `RUGCHECK_API_ENDPOINT/{token_address}/report/summary`.
 - **Filtering Logic**: A token is deemed unsafe and filtered out if ANY of the following conditions are met, based on the API response and your configuration:
-    - **Score Threshold**: If the token's `scoreNormalised` (a 0-100 score from RugCheck, where higher is generally better) is *less than* the `RUGCHECK_SCORE_THRESHOLD` defined in your configuration.
+    - **Score Threshold**: If the token's `scoreNormalised` (a 0-100 score from RugCheck, where **lower scores are better/safer**) is *greater than* the `RUGCHECK_SCORE_THRESHOLD` defined in your configuration.
     - **Critical Risks**: If any risk reported by the API has a `name` that matches one of the names listed in your `RUGCHECK_CRITICAL_RISK_NAMES` configuration.
     - **API Call Failure**: If the API call fails, returns an error, or the response cannot be parsed, the token is typically treated as unsafe by default.
-- **Logging**: Detailed reasons for failing the safety check (e.g., low score, specific critical risks found) are logged. Passed checks are also logged with key metrics like the `scoreNormalised`.
+- **Logging**: Detailed reasons for failing the safety check (e.g., high score, specific critical risks found) are logged. Passed checks are also logged with key metrics like the `scoreNormalised`.
 - **Authentication and API Key Usage**:
     - The bot supports authenticated requests to RugCheck.xyz, which may be necessary for higher rate limits or accessing certain endpoints.
     - **JWT Generation (Primary Method)**: If `RUGCHECK_AUTH_SOLANA_PRIVATE_KEY` (hex-encoded 32-byte seed) and `RUGCHECK_AUTH_WALLET_PUBLIC_KEY` are provided in your `.env` file, the bot will attempt to dynamically generate a JSON Web Token (JWT). This process involves:
