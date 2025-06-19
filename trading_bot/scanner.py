@@ -169,7 +169,9 @@ class TokenScanner:
     async def scan_new_tokens(self):
         """Continuously scan for new tokens meeting our criteria"""
         try:
-            url = f"{DEXSCREENER_API}/pairs/solana" # Dexscreener new pairs endpoint
+            # Changed to use the search endpoint for Solana tokens, ordered by creation time
+            url = f"{DEXSCREENER_API}/search?q=solana&orderBy=pairCreatedAt&orderDirection=desc"
+            logger.info(f"Scanning for new tokens using URL: {url}")
             async with self.session.get(url) as response:
                 response.raise_for_status()
                 data = await response.json()
