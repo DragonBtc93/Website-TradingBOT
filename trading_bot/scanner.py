@@ -290,6 +290,12 @@ class TokenScanner:
                 if status_code == 404: return default_result(['Token not found on RugCheck'], f'Token not found ({status_code})')
                 if status_code in [401, 403]: return default_result(['RugCheck API authorization failed'], f'Auth error ({status_code})')
                 if status_code == 429: return default_result(['RugCheck API rate limit exceeded'], f'Rate limit ({status_code})')
+
+                if status_code == 501: # New specific check for 501 Not Implemented
+                    error_message = f"RugCheck API 501 Not Implemented for {token_address} at {url}"
+                    logger.error(error_message + f". Response: {raw_response_text}")
+                    return default_result(['RugCheck API 501 Not Implemented'], error_message)
+
                 response.raise_for_status() # For other 4xx/5xx errors
 
                 response_data = await response.json(content_type=None)
