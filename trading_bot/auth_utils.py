@@ -89,4 +89,4 @@ async def get_rugcheck_jwt(
     except Exception as e:
         logger.error(f"An unexpected error occurred during RugCheck.xyz JWT generation: {e}", exc_info=True)
         return None
-```
+
